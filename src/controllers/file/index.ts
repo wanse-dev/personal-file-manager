@@ -265,3 +265,80 @@ export const syncDelete = async (req: Request, res: Response) => {
     });
   }
 };
+
+// -- descarga de archivos --
+
+export const downloadFile = async (req: Request, res: Response) => {
+  try {
+    const { fileName, location } = req.query;
+
+    if (!fileName || !location) {
+      return res.status(400).json({ message: "missing fileName or location" });
+    }
+
+    if (location === "cloud") {
+      const { uid_user } = req.query;
+      const file = bucket.file(`uploads/${uid_user}/${fileName}`);
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: "03-09-2491",
+      });
+      return res.redirect(url);
+    }
+
+    if (location === "local") {
+      const bridgeBaseUrl = getBridgeUrl();
+
+      try {
+        // pregunta al bridge por el tamaño del archivo
+        const infoRes = await axios.get(
+          `${bridgeBaseUrl}/api/bridge/info/${fileName}`,
+          {
+            headers: getHeaders(),
+          },
+        );
+
+        const fileSize = infoRes.data.size;
+        const limit = 50 * 1024 * 1024; // 50 MB en bytes
+
+        if (fileSize > limit) {
+          // si es pesado, entonces redirección 302 a Ngrok
+          console.log(`redirecting large file (${fileName}) to Bridge.`);
+          return res.redirect(
+            `${bridgeBaseUrl}/api/bridge/download/${fileName}`,
+          );
+        } else {
+          // si es liviano, entonces stream a través de Railway
+          console.log(`Delivering light file (${fileName}) through Railway.`);
+
+          const response = await axios({
+            method: "get",
+            url: `${bridgeBaseUrl}/api/bridge/download/${fileName}`,
+            responseType: "stream",
+            headers: getHeaders(),
+          });
+
+          res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${fileName}"`,
+          );
+          res.setHeader(
+            "Content-Type",
+            response.headers["content-type"] || "application/octet-stream",
+          );
+
+          return response.data.pipe(res);
+        }
+      } catch (err: any) {
+        console.error("bridge error:", err.message);
+        return res.status(404).json({
+          message: "File not found on local storage or bridge offline",
+        });
+      }
+    }
+
+    res.status(400).json({ message: "invalid location" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
