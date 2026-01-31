@@ -266,7 +266,7 @@ export const syncDelete = async (req: Request, res: Response) => {
   }
 };
 
-// -- descarga de archivos --
+// -- descarga y visualización de archivos --
 
 export const downloadFile = async (req: Request, res: Response) => {
   try {
@@ -338,6 +338,90 @@ export const downloadFile = async (req: Request, res: Response) => {
     }
 
     res.status(400).json({ message: "invalid location" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const getFilesSortedByMostRecent = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const { uid_user } = req.query;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 20;
+    const offset = (page - 1) * limit;
+
+    if (!uid_user)
+      return res.status(400).json({ message: "uid_user is required" });
+
+    // llamada al spu que me ordena automáticamente por orden de creación descendente
+    const filesInDb: any = await sequelize.query(
+      "CALL spu_list_user_files(:uid, :limit, :offset)",
+      {
+        replacements: {
+          uid: uid_user,
+          limit: limit,
+          offset: offset,
+        },
+        type: QueryTypes.RAW,
+      },
+    );
+
+    const rows = Array.isArray(filesInDb) ? filesInDb : [];
+
+    if (rows.length === 0) {
+      return res.json({ page, total: 0, data: [] });
+    }
+
+    // se filtran los que están en el disco local para pedirle info al bridge
+    const localFileNames = rows
+      .filter((f: any) => f.location === "local")
+      .map((f: any) => f.original_name);
+
+    let localDetails: any[] = [];
+    if (localFileNames.length > 0) {
+      try {
+        const bridgeRes = await axios.post(
+          `${getBridgeUrl()}/api/bridge/batch-info`,
+          {
+            files: localFileNames,
+          },
+          { headers: getHeaders() },
+        );
+        localDetails = bridgeRes.data;
+      } catch (err) {
+        console.error("⚠️ bridge offline or batch-info error.");
+        // si el bridge falla, sigue el flujo pero con detalles vacios
+      }
+    }
+
+    // se mezcla la info de la DB con la del disco físico
+    const finalData = rows.map((dbFile: any) => {
+      const details = localDetails.find(
+        (ld: any) => ld.name === dbFile.original_name,
+      );
+      return {
+        id: dbFile.id_file,
+        name: dbFile.original_name,
+        extension: dbFile.extension,
+        category: dbFile.category,
+        location: dbFile.location,
+        createdAt: dbFile.created_at,
+        // si es local, se usa el size del disco. si es cloud, debería usarse el de la DB.
+        size: details?.size || 0,
+        isAvailable:
+          dbFile.location === "local" ? !!details && !details.error : true,
+      };
+    });
+
+    res.json({
+      success: true,
+      page,
+      count: finalData.length,
+      data: finalData,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
