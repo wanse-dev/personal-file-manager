@@ -288,46 +288,9 @@ export const downloadFile = async (req: Request, res: Response) => {
 
     if (location === "local") {
       const bridgeBaseUrl = getBridgeUrl();
+      const directServeoUrl = `${bridgeBaseUrl}/api/bridge/download/${fileName}`;
 
-      try {
-        // 1. Verificamos si el bridge responde y nos da la info del archivo
-        const infoRes = await axios.get(
-          `${bridgeBaseUrl}/api/bridge/info/${fileName}`,
-          { headers: getHeaders() },
-        );
-
-        // 2. IMPORTANTE: En lugar de hacer res.redirect (que pierde los headers),
-        // hacemos SIEMPRE un stream a través de Railway.
-        // Esto garantiza que el bypass-tunnel-reminder llegue a Serveo.
-
-        console.log(
-          `Streaming file (${fileName}) from Bridge through Railway.`,
-        );
-
-        const response = await axios({
-          method: "get",
-          url: `${bridgeBaseUrl}/api/bridge/download/${fileName}`,
-          responseType: "stream",
-          headers: getHeaders(),
-        });
-
-        res.setHeader(
-          "Content-Disposition",
-          `attachment; filename="${fileName}"`,
-        );
-        res.setHeader(
-          "Content-Type",
-          response.headers["content-type"] || "application/octet-stream",
-        );
-
-        return response.data.pipe(res);
-      } catch (err: any) {
-        console.error("bridge error:", err.message);
-        return res.status(404).json({
-          message: "File not found on local storage or bridge offline",
-          error: err.message,
-        });
-      }
+      return res.redirect(directServeoUrl);
     }
 
     res.status(400).json({ message: "invalid location" });
