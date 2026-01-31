@@ -7,13 +7,17 @@ import FormData from "form-data";
 
 // --- helpers ---
 
-const getBridgeUrl = () =>
-  process.env.BRIDGE_URL?.replace("/upload-bridge", "") || "";
+const getBridgeUrl = () => {
+  let url = process.env.BRIDGE_URL || "";
+  return url.replace("/upload-bridge", "").replace(/\/+$/, "");
+};
 
 const getHeaders = (form?: FormData) => ({
   ...(form ? form.getHeaders() : {}),
-  "bypass-tunnel-reminder": "true", // header oficial para LocalTunnel/Ngrok
-  "User-Agent": "node-fetch",        // evita que LocalTunnel crea que es un browser
+  "bypass-tunnel-reminder": "true",
+  // se usa un User-Agent de Chrome real para que Serveo no nos bloquee
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 });
 
 // --- upload y remove físicos ---
@@ -193,8 +197,9 @@ export const removeFile = async (req: Request, res: Response) => {
 export const syncAdd = async (req: Request, res: Response) => {
   try {
     const { fileName, extension, size, category, uid_user } = req.body;
-    
-    if (!fileName || !uid_user) return res.status(400).json({ message: "missing data" });
+
+    if (!fileName || !uid_user)
+      return res.status(400).json({ message: "missing data" });
 
     const resDb: any = await sequelize.query(
       "CALL sp_auto_register_file(:name, :ext, :size, :cat, :path, :uid)",
@@ -208,7 +213,7 @@ export const syncAdd = async (req: Request, res: Response) => {
           uid: uid_user,
         },
         type: QueryTypes.RAW,
-      }
+      },
     );
 
     const data = Array.isArray(resDb) ? resDb[0] : resDb;
@@ -283,49 +288,42 @@ export const downloadFile = async (req: Request, res: Response) => {
       const bridgeBaseUrl = getBridgeUrl();
 
       try {
-        // pregunta al bridge por el tamaño del archivo
+        // 1. Verificamos si el bridge responde y nos da la info del archivo
         const infoRes = await axios.get(
           `${bridgeBaseUrl}/api/bridge/info/${fileName}`,
-          {
-            headers: getHeaders(),
-          },
+          { headers: getHeaders() },
         );
 
-        const fileSize = infoRes.data.size;
-        const limit = 50 * 1024 * 1024; // 50 MB en bytes
+        // 2. IMPORTANTE: En lugar de hacer res.redirect (que pierde los headers),
+        // hacemos SIEMPRE un stream a través de Railway.
+        // Esto garantiza que el bypass-tunnel-reminder llegue a Serveo.
 
-        if (fileSize > limit) {
-          // si es pesado, entonces redirección 302 a Ngrok
-          console.log(`redirecting large file (${fileName}) to Bridge.`);
-          return res.redirect(
-            `${bridgeBaseUrl}/api/bridge/download/${fileName}`,
-          );
-        } else {
-          // si es liviano, entonces stream a través de Railway
-          console.log(`Delivering light file (${fileName}) through Railway.`);
+        console.log(
+          `Streaming file (${fileName}) from Bridge through Railway.`,
+        );
 
-          const response = await axios({
-            method: "get",
-            url: `${bridgeBaseUrl}/api/bridge/download/${fileName}`,
-            responseType: "stream",
-            headers: getHeaders(),
-          });
+        const response = await axios({
+          method: "get",
+          url: `${bridgeBaseUrl}/api/bridge/download/${fileName}`,
+          responseType: "stream",
+          headers: getHeaders(),
+        });
 
-          res.setHeader(
-            "Content-Disposition",
-            `attachment; filename="${fileName}"`,
-          );
-          res.setHeader(
-            "Content-Type",
-            response.headers["content-type"] || "application/octet-stream",
-          );
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${fileName}"`,
+        );
+        res.setHeader(
+          "Content-Type",
+          response.headers["content-type"] || "application/octet-stream",
+        );
 
-          return response.data.pipe(res);
-        }
+        return response.data.pipe(res);
       } catch (err: any) {
         console.error("bridge error:", err.message);
         return res.status(404).json({
           message: "File not found on local storage or bridge offline",
+          error: err.message,
         });
       }
     }
