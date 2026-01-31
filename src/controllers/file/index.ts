@@ -12,9 +12,8 @@ const getBridgeUrl = () =>
 
 const getHeaders = (form?: FormData) => ({
   ...(form ? form.getHeaders() : {}),
-  "bypass-tunnel-reminder": "true", // para Ngrok (por las dudas)
-  "cf-skip-browser-warning": "true", // para Cloudflare
-  "User-Agent": "Mozilla/5.0",      // engaña a LocalTunnel para que crea que es un navegador real
+  "bypass-tunnel-reminder": "true", // header oficial para LocalTunnel/Ngrok
+  "User-Agent": "node-fetch",        // evita que LocalTunnel crea que es un browser
 });
 
 // --- upload y remove físicos ---
