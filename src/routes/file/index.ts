@@ -1,5 +1,5 @@
 import express from 'express';
-import { uploadFile, removeFile, syncDelete, syncAdd, downloadFile } from "../../controllers/file/index.js"; 
+import { uploadFile, removeFile, syncDelete, syncAdd, downloadFile, getFilesSortedByMostRecent } from "../../controllers/file/index.js"; 
 import { upload } from "../../config/multer.js";
 
 const router = express.Router();
@@ -10,5 +10,6 @@ router.delete('/sync-delete', syncDelete);
 router.post('/sync-add', syncAdd);
 router.delete('/remove', removeFile);
 router.get("/download", downloadFile);
+router.get("/list/most-recent", getFilesSortedByMostRecent);
 
 export default router;
