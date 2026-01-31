@@ -192,41 +192,34 @@ export const removeFile = async (req: Request, res: Response) => {
 
 export const syncAdd = async (req: Request, res: Response) => {
   try {
-    const { fileName, filePath, uid_user } = req.body;
-    if (!fileName || !filePath)
-      return res.status(400).json({ message: "missing data" });
+    const { fileName, extension, size, category, uid_user } = req.body;
+    
+    if (!fileName || !uid_user) return res.status(400).json({ message: "missing data" });
 
     const resDb: any = await sequelize.query(
-      "CALL sp_auto_register_file(:name, :path, :uid)",
+      "CALL sp_auto_register_file(:name, :ext, :size, :cat, :path, :uid)",
       {
         replacements: {
           name: fileName,
-          path: filePath,
-          uid: uid_user || "SIN_USUARIO",
+          ext: extension || "bin",
+          size: size || 0,
+          cat: category || "binary",
+          path: "local", // como es sync local, el path es una referencia
+          uid: uid_user,
         },
         type: QueryTypes.RAW,
-      },
+      }
     );
 
     const data = Array.isArray(resDb) ? resDb[0] : resDb;
     const added = data?.status === 1;
 
-    if (added) {
-      res.status(201).json({
-        success: true,
-        message: `file ${fileName} registered successfully`,
-      });
-    } else {
-      res
-        .status(200)
-        .json({ success: true, message: "file already registered" });
-    }
-  } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      message: "sync add error",
-      error: error.message,
+    res.status(added ? 201 : 200).json({
+      success: true,
+      message: added ? "File registered" : "File already exists",
     });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
