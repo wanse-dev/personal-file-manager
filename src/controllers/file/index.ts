@@ -9,6 +9,7 @@ import FormData from "form-data";
 
 const getBridgeUrl = () => {
   let url = process.env.BRIDGE_URL || "";
+  // Limpiamos la URL por si viene con el endpoint de upload o barras al final
   return url.replace("/upload-bridge", "").replace(/\/+$/, "");
 };
 
@@ -32,7 +33,6 @@ export const uploadFile = async (req: Request, res: Response) => {
     if (!file || !location || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
-    // revisa si el archivo ya existe para el usuario
     const existingFile: any = await sequelize.query(
       "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
       {
@@ -48,10 +48,12 @@ export const uploadFile = async (req: Request, res: Response) => {
       });
     }
 
-    // revisa si el bridge local esta activo
     if (location === "local") {
       try {
-        await axios.get(`${getBridgeUrl()}/ping`, { timeout: 2000 });
+        await axios.get(`${getBridgeUrl()}/ping`, {
+          timeout: 2000,
+          headers: getHeaders(),
+        });
       } catch (err) {
         location = "cloud";
       }
@@ -65,7 +67,6 @@ export const uploadFile = async (req: Request, res: Response) => {
     const extension = file.originalname.split(".").pop() || "bin";
     let finalPath = "";
 
-    // upload del archivo fisico
     if (location === "local") {
       const form = new FormData();
       form.append("file", file.buffer, {
@@ -74,7 +75,7 @@ export const uploadFile = async (req: Request, res: Response) => {
       });
 
       const { data } = await axios.post(
-        `${process.env.BRIDGE_URL}/upload-bridge`,
+        `${getBridgeUrl()}/upload-bridge`,
         form,
         {
           headers: getHeaders(form),
@@ -101,7 +102,6 @@ export const uploadFile = async (req: Request, res: Response) => {
       });
     }
 
-    // registro en la DB
     await sequelize.query(
       "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :path, :uid)",
       {
@@ -142,17 +142,11 @@ export const removeFile = async (req: Request, res: Response) => {
     }
 
     if (location === "local") {
-      const bridgeBaseUrl = process.env.BRIDGE_URL?.replace(
-        "/upload-bridge",
-        "",
-      );
+      const bridgeBaseUrl = getBridgeUrl();
 
       await axios.delete(`${bridgeBaseUrl}/sync-delete`, {
         data: { fileName, uid_user },
-        headers: {
-          "bypass-tunnel-reminder": "true",
-          "cf-skip-browser-warning": "true",
-        },
+        headers: getHeaders(),
       });
     } else if (location === "cloud") {
       const file = bucket.file(`uploads/${uid_user}/${fileName}`);
@@ -170,36 +164,23 @@ export const removeFile = async (req: Request, res: Response) => {
     const affectedRows =
       rawResult && rawResult[0] ? rawResult[0].affectedRows : 0;
 
-    if (affectedRows > 0) {
-      res.status(200).json({
-        success: true,
-        message: "file deleted from storage and database",
-      });
-    } else {
-      res.status(200).json({
-        success: true,
-        message: "file deleted from storage, but no database record found",
-      });
-    }
+    res.status(200).json({
+      success: true,
+      message:
+        affectedRows > 0 ? "file deleted" : "file deleted from storage only",
+    });
   } catch (error: any) {
-    console.error(
-      "❌ Error in removeFile:",
-      error.response?.data || error.message,
-    );
     res.status(error.response?.status || 500).json({
       success: false,
       message: "failed to delete file",
-      error: error.response?.data?.message || error.message,
+      error: error.message,
     });
   }
 };
 
-// --- sync de registros en DB ---
-
 export const syncAdd = async (req: Request, res: Response) => {
   try {
     const { fileName, extension, size, category, uid_user } = req.body;
-
     if (!fileName || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
@@ -211,7 +192,7 @@ export const syncAdd = async (req: Request, res: Response) => {
           ext: extension || "bin",
           size: size || 0,
           cat: category || "binary",
-          path: "local", // como es sync local, el path es una referencia
+          path: "local",
           uid: uid_user,
         },
         type: QueryTypes.RAW,
@@ -245,28 +226,16 @@ export const syncDelete = async (req: Request, res: Response) => {
     );
 
     const data = Array.isArray(resDb) ? resDb[0] : resDb;
-    const success = data?.affectedRows > 0;
-
-    if (success) {
-      res.status(200).json({
-        success: true,
-        message: `file ${fileName} removed from database`,
-      });
-    } else {
-      res
-        .status(404)
-        .json({ success: false, message: "record not found for deletion" });
-    }
-  } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      message: "sync delete error",
-      error: error.message,
+    res.status(data?.affectedRows > 0 ? 200 : 404).json({
+      success: data?.affectedRows > 0,
+      message: data?.affectedRows > 0 ? "removed" : "not found",
     });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
-// -- descarga y visualización de archivos --
+// -- descarga y visualización --
 
 export const downloadFile = async (req: Request, res: Response) => {
   try {
@@ -288,9 +257,10 @@ export const downloadFile = async (req: Request, res: Response) => {
 
     if (location === "local") {
       const bridgeBaseUrl = getBridgeUrl();
-      const directServeoUrl = `${bridgeBaseUrl}/api/bridge/download/${fileName}`;
+      const directCloudflareUrl = `${bridgeBaseUrl}/api/bridge/download/${fileName}`;
 
-      return res.redirect(directServeoUrl);
+      console.log(`📡 Redirecting to Cloudflare Tunnel: ${fileName}`);
+      return res.redirect(directCloudflareUrl);
     }
 
     res.status(400).json({ message: "invalid location" });
@@ -312,26 +282,17 @@ export const getFilesSortedByMostRecent = async (
     if (!uid_user)
       return res.status(400).json({ message: "uid_user is required" });
 
-    // llamada al spu que me ordena automáticamente por orden de creación descendente
     const filesInDb: any = await sequelize.query(
       "CALL spu_list_user_files(:uid, :limit, :offset)",
       {
-        replacements: {
-          uid: uid_user,
-          limit: limit,
-          offset: offset,
-        },
+        replacements: { uid: uid_user, limit, offset },
         type: QueryTypes.RAW,
       },
     );
 
     const rows = Array.isArray(filesInDb) ? filesInDb : [];
+    if (rows.length === 0) return res.json({ page, total: 0, data: [] });
 
-    if (rows.length === 0) {
-      return res.json({ page, total: 0, data: [] });
-    }
-
-    // se filtran los que están en el disco local para pedirle info al bridge
     const localFileNames = rows
       .filter((f: any) => f.location === "local")
       .map((f: any) => f.original_name);
@@ -341,19 +302,15 @@ export const getFilesSortedByMostRecent = async (
       try {
         const bridgeRes = await axios.post(
           `${getBridgeUrl()}/api/bridge/batch-info`,
-          {
-            files: localFileNames,
-          },
+          { files: localFileNames },
           { headers: getHeaders() },
         );
         localDetails = bridgeRes.data;
       } catch (err) {
-        console.error("⚠️ bridge offline or batch-info error.");
-        // si el bridge falla, sigue el flujo pero con detalles vacios
+        console.error("⚠️ Bridge offline.");
       }
     }
 
-    // se mezcla la info de la DB con la del disco físico
     const finalData = rows.map((dbFile: any) => {
       const details = localDetails.find(
         (ld: any) => ld.name === dbFile.original_name,
@@ -365,19 +322,13 @@ export const getFilesSortedByMostRecent = async (
         category: dbFile.category,
         location: dbFile.location,
         createdAt: dbFile.created_at,
-        // si es local, se usa el size del disco. si es cloud, debería usarse el de la DB.
         size: details?.size || 0,
         isAvailable:
           dbFile.location === "local" ? !!details && !details.error : true,
       };
     });
 
-    res.json({
-      success: true,
-      page,
-      count: finalData.length,
-      data: finalData,
-    });
+    res.json({ success: true, page, count: finalData.length, data: finalData });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
