@@ -338,16 +338,41 @@ export const syncAdd = async (req: Request, res: Response) => {
 
 export const syncRemove = async (req: Request, res: Response) => {
   try {
-    const { fileName, uid_user } = req.body;
+    const { fileName, uid_user, folder_name } = req.body;
 
     if (!fileName || !uid_user)
       return res
         .status(200)
         .json({ success: false, message: "No file data received" });
 
+    let folderId = null;
+
+    if (folder_name) {
+      const parts = folder_name.split("/");
+      let currentParentId = null;
+      for (const part of parts) {
+        const folder: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentParentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else {
+          currentParentId = null;
+          break;
+        }
+      }
+      folderId = currentParentId;
+    }
+
     await sequelize.query(
-      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid",
-      { replacements: { name: fileName, uid: uid_user }, type: QueryTypes.RAW },
+      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
+      {
+        replacements: { name: fileName, uid: uid_user, folder: folderId },
+        type: QueryTypes.RAW,
+      },
     );
 
     res.status(200).json({ success: true });
@@ -358,16 +383,41 @@ export const syncRemove = async (req: Request, res: Response) => {
 
 export const removeFolderSync = async (req: Request, res: Response) => {
   try {
-    const { name, uid_user } = req.body;
+    const { name, uid_user, parent_name } = req.body;
 
     if (!name || !uid_user)
       return res
         .status(200)
-        .json({ success: false, message: "No folder data received" });
+        .json({ success: false, message: "No data received" });
+
+    let parentId = null;
+
+    if (parent_name) {
+      const parts = parent_name.split("/");
+      let currentParentId = null;
+      for (const part of parts) {
+        const folder: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentParentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else {
+          currentParentId = null;
+          break;
+        }
+      }
+      parentId = currentParentId;
+    }
 
     await sequelize.query(
-      "DELETE FROM folders WHERE name = :name AND uid_user = :uid",
-      { replacements: { name, uid: uid_user }, type: QueryTypes.RAW },
+      "DELETE FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL))",
+      {
+        replacements: { name, uid: uid_user, parent: parentId },
+        type: QueryTypes.RAW,
+      },
     );
 
     res.status(200).json({ success: true });
