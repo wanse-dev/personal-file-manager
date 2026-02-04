@@ -70,20 +70,27 @@ export const removeFolder = async (req: Request, res: Response) => {
     if (!id_folder || !name || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
+    let fullPathToDelete = name;
+    const [folderInfo]: any = await sequelize.query(
+      "SELECT p.name as parentName FROM folders f LEFT JOIN folders p ON f.parent_id = p.id_folder WHERE f.id_folder = :id",
+      { replacements: { id: id_folder }, type: QueryTypes.SELECT },
+    );
+
+    if (folderInfo?.parentName) {
+      fullPathToDelete = `${folderInfo.parentName}/${name}`;
+    }
+
     try {
       await axios.delete(`${getBridgeUrl()}/sync-delete`, {
-        data: { fileName: name, uid_user },
+        data: { fileName: fullPathToDelete, uid_user },
         headers: getHeaders(),
         timeout: 5000,
       });
     } catch (bridgeError: any) {
-      console.error(
-        "Fallo el borrado físico en el Bridge:",
-        bridgeError.message,
-      );
+      console.error("Fallo el borrado físico:", bridgeError.message);
     }
 
-    const [result]: any = await sequelize.query(
+    await sequelize.query(
       "DELETE FROM folders WHERE id_folder = :id AND uid_user = :uid",
       { replacements: { id: id_folder, uid: uid_user }, type: QueryTypes.RAW },
     );
