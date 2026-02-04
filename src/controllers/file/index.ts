@@ -148,13 +148,11 @@ export const uploadFile = async (req: Request, res: Response) => {
       },
     );
 
-    res
-      .status(201)
-      .json({
-        success: true,
-        location,
-        data: { name: file.originalname, path: finalPath || cloudUrl },
-      });
+    res.status(201).json({
+      success: true,
+      location,
+      data: { name: file.originalname, path: finalPath || cloudUrl },
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -194,10 +192,33 @@ export const removeFile = async (req: Request, res: Response) => {
 
 export const syncAdd = async (req: Request, res: Response) => {
   try {
-    const { fileName, extension, size, category, uid_user, id_folder } =
-      req.body;
-    if (!fileName || !uid_user)
+    const {
+      fileName,
+      extension,
+      size,
+      category,
+      uid_user,
+      id_folder,
+      folder_name,
+    } = req.body;
+
+    if (!fileName || !uid_user) {
       return res.status(400).json({ message: "missing data" });
+    }
+
+    // --- lógica de resolución de carpeta ---
+    let folderId = id_folder || null;
+
+    if (!folderId && folder_name) {
+      const folder: any = await sequelize.query(
+        "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
+        {
+          replacements: { name: folder_name, uid: uid_user },
+          type: QueryTypes.SELECT,
+        },
+      );
+      if (folder.length > 0) folderId = folder[0].id_folder;
+    }
 
     await sequelize.query(
       "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
@@ -208,7 +229,7 @@ export const syncAdd = async (req: Request, res: Response) => {
           size: size || 0,
           cat: category || "binary",
           loc: "local",
-          folder: id_folder || null,
+          folder: folderId,
           uid: uid_user,
           url: null,
         },
@@ -217,6 +238,50 @@ export const syncAdd = async (req: Request, res: Response) => {
     );
 
     res.status(201).json({ success: true, message: "File registered" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const syncFolder = async (req: Request, res: Response) => {
+  try {
+    const { name, parent_name, uid_user } = req.body;
+    if (!name || !uid_user)
+      return res.status(400).json({ message: "missing data" });
+
+    let parentId = null;
+
+    if (parent_name) {
+      const parentFolder: any = await sequelize.query(
+        "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
+        {
+          replacements: { name: parent_name, uid: uid_user },
+          type: QueryTypes.SELECT,
+        },
+      );
+      if (parentFolder.length > 0) parentId = parentFolder[0].id_folder;
+    }
+
+    const existingFolder: any = await sequelize.query(
+      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL)) LIMIT 1",
+      {
+        replacements: { name, uid: uid_user, parent: parentId },
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    if (existingFolder.length > 0) {
+      return res
+        .status(200)
+        .json({ success: true, message: "Folder already exists" });
+    }
+
+    await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
+      replacements: { name, parent: parentId, uid: uid_user },
+      type: QueryTypes.RAW,
+    });
+
+    res.status(201).json({ success: true, message: "Folder synced" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
