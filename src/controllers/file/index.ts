@@ -287,14 +287,26 @@ export const syncFolder = async (req: Request, res: Response) => {
     let parentId = null;
 
     if (parent_name) {
-      const parentFolder: any = await sequelize.query(
-        "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
-        {
-          replacements: { name: parent_name, uid: uid_user },
-          type: QueryTypes.SELECT,
-        },
-      );
-      if (parentFolder.length > 0) parentId = parentFolder[0].id_folder;
+      const parts = parent_name.split(/\/|\\/);
+      let currentParentId = null;
+
+      for (const part of parts) {
+        const folder: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentParentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+
+        if (folder.length > 0) {
+          currentParentId = folder[0].id_folder;
+        } else {
+          currentParentId = null;
+          break;
+        }
+      }
+      parentId = currentParentId;
     }
 
     const existingFolder: any = await sequelize.query(
