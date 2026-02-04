@@ -9,7 +9,6 @@ import FormData from "form-data";
 
 const getBridgeUrl = () => {
   let url = process.env.BRIDGE_URL || "";
-  // Limpiamos la URL por si viene con el endpoint de upload o barras al final
   return url.replace("/upload-bridge", "").replace(/\/+$/, "");
 };
 
@@ -24,30 +23,54 @@ const getHeaders = (form?: FormData) => ({
   Connection: "keep-alive",
 });
 
-// --- upload y remove físicos ---
+// --- carpetas ---
+
+export const createFolder = async (req: Request, res: Response) => {
+  try {
+    const { name, parent_id, uid_user } = req.body;
+    if (!name || !uid_user)
+      return res.status(400).json({ message: "missing data" });
+
+    const [result]: any = await sequelize.query(
+      "CALL spu_create_folder(:name, :parent, :uid)",
+      {
+        replacements: { name, parent: parent_id || null, uid: uid_user },
+        type: QueryTypes.RAW,
+      },
+    );
+
+    res.status(201).json({ success: true, id_folder: result.id_folder });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// --- upload y remove ---
 
 export const uploadFile = async (req: Request, res: Response) => {
   try {
     const file = req.file as Express.Multer.File;
-    let { location, uid_user } = req.body;
+    let { location, uid_user, id_folder } = req.body;
 
     if (!file || !location || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
     const existingFile: any = await sequelize.query(
-      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
+      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL)) LIMIT 1",
       {
-        replacements: { name: file.originalname, uid: uid_user },
+        replacements: {
+          name: file.originalname,
+          uid: uid_user,
+          folder: id_folder || null,
+        },
         type: QueryTypes.SELECT,
       },
     );
 
-    if (existingFile.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "file already exists",
-      });
-    }
+    if (existingFile.length > 0)
+      return res
+        .status(409)
+        .json({ success: false, message: "file already exists" });
 
     if (location === "local") {
       try {
@@ -64,9 +87,15 @@ export const uploadFile = async (req: Request, res: Response) => {
       ? "image"
       : file.mimetype.startsWith("video/")
         ? "video"
-        : "binary";
+        : file.mimetype.includes("pdf") || file.mimetype.includes("word")
+          ? "document"
+          : file.mimetype.startsWith("text/")
+            ? "text"
+            : "binary";
+
     const extension = file.originalname.split(".").pop() || "bin";
     let finalPath = "";
+    let cloudUrl = null;
 
     if (location === "local") {
       const form = new FormData();
@@ -74,7 +103,6 @@ export const uploadFile = async (req: Request, res: Response) => {
         filename: file.originalname,
         contentType: file.mimetype,
       });
-
       const { data } = await axios.post(
         `${getBridgeUrl()}/upload-bridge`,
         form,
@@ -93,7 +121,7 @@ export const uploadFile = async (req: Request, res: Response) => {
         resumable: false,
       });
 
-      finalPath = await new Promise((resolve, reject) => {
+      cloudUrl = await new Promise((resolve, reject) => {
         stream.on("error", reject);
         stream.on("finish", async () => {
           await blob.makePublic();
@@ -104,7 +132,7 @@ export const uploadFile = async (req: Request, res: Response) => {
     }
 
     await sequelize.query(
-      "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :path, :uid)",
+      "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
       {
         replacements: {
           name: file.originalname,
@@ -112,141 +140,136 @@ export const uploadFile = async (req: Request, res: Response) => {
           size: file.size,
           cat: category,
           loc: location,
-          path: finalPath,
+          folder: id_folder || null,
           uid: uid_user,
+          url: cloudUrl,
         },
         type: QueryTypes.RAW,
       },
     );
 
-    res.status(201).json({
-      success: true,
-      message: `file uploaded successfully to ${location}`,
-      location,
-      data: { name: file.originalname, path: finalPath },
-    });
+    res
+      .status(201)
+      .json({
+        success: true,
+        location,
+        data: { name: file.originalname, path: finalPath || cloudUrl },
+      });
   } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      message: "upload failed",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
 export const removeFile = async (req: Request, res: Response) => {
   try {
-    const { fileName, location, uid_user } = req.body;
-
-    if (!fileName || !location || !uid_user) {
-      return res.status(400).json({ message: "missing required data" });
-    }
+    const { id_file, fileName, location, uid_user } = req.body;
+    if (!id_file || !fileName || !location || !uid_user)
+      return res.status(400).json({ message: "missing data" });
 
     if (location === "local") {
-      const bridgeBaseUrl = getBridgeUrl();
-
-      await axios.delete(`${bridgeBaseUrl}/sync-delete`, {
+      await axios.delete(`${getBridgeUrl()}/sync-delete`, {
         data: { fileName, uid_user },
         headers: getHeaders(),
       });
     } else if (location === "cloud") {
       const file = bucket.file(`uploads/${uid_user}/${fileName}`);
-      await file.delete();
+      await file.delete().catch(() => console.log("File not in cloud storage"));
     }
 
-    const rawResult: any = await sequelize.query(
-      "CALL sp_delete_file_by_name(:name, :uid)",
+    const [result]: any = await sequelize.query(
+      "CALL spu_delete_file(:id, :uid)",
       {
-        replacements: { name: fileName, uid: uid_user },
+        replacements: { id: id_file, uid: uid_user },
         type: QueryTypes.RAW,
       },
     );
 
-    const affectedRows =
-      rawResult && rawResult[0] ? rawResult[0].affectedRows : 0;
-
-    res.status(200).json({
-      success: true,
-      message:
-        affectedRows > 0 ? "file deleted" : "file deleted from storage only",
-    });
+    res.status(200).json({ success: result.affectedRows > 0 });
   } catch (error: any) {
-    res.status(error.response?.status || 500).json({
-      success: false,
-      message: "failed to delete file",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
+// --- sincronización automática ---
+
 export const syncAdd = async (req: Request, res: Response) => {
   try {
-    const { fileName, extension, size, category, uid_user } = req.body;
+    const { fileName, extension, size, category, uid_user, id_folder } =
+      req.body;
     if (!fileName || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
-    const resDb: any = await sequelize.query(
-      "CALL sp_auto_register_file(:name, :ext, :size, :cat, :path, :uid)",
+    await sequelize.query(
+      "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
       {
         replacements: {
           name: fileName,
           ext: extension || "bin",
           size: size || 0,
           cat: category || "binary",
-          path: "local",
+          loc: "local",
+          folder: id_folder || null,
           uid: uid_user,
+          url: null,
         },
         type: QueryTypes.RAW,
       },
     );
 
-    const data = Array.isArray(resDb) ? resDb[0] : resDb;
-    const added = data?.status === 1;
-
-    res.status(added ? 201 : 200).json({
-      success: true,
-      message: added ? "File registered" : "File already exists",
-    });
+    res.status(201).json({ success: true, message: "File registered" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-export const syncDelete = async (req: Request, res: Response) => {
-  try {
-    const { fileName, uid_user } = req.body;
-    if (!fileName || !uid_user)
-      return res.status(400).json({ message: "missing data" });
+// --- lectura y stats ---
 
-    const resDb: any = await sequelize.query(
-      "CALL sp_delete_file_by_name(:name, :uid)",
+export const getContent = async (req: Request, res: Response) => {
+  try {
+    const { uid_user, id_folder } = req.query;
+    if (!uid_user)
+      return res.status(400).json({ message: "uid_user required" });
+
+    const results: any = await sequelize.query(
+      "CALL spu_list_folder_content(:uid, :folder)",
       {
-        replacements: { name: fileName, uid: uid_user },
+        replacements: { uid: uid_user, folder: id_folder || null },
         type: QueryTypes.RAW,
       },
     );
 
-    const data = Array.isArray(resDb) ? resDb[0] : resDb;
-    res.status(data?.affectedRows > 0 ? 200 : 404).json({
-      success: data?.affectedRows > 0,
-      message: data?.affectedRows > 0 ? "removed" : "not found",
-    });
+    res.json({ success: true, data: Array.isArray(results) ? results : [] });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-// -- descarga y visualización --
+export const getStorageStats = async (req: Request, res: Response) => {
+  try {
+    const { uid_user } = req.query;
+    const [stats]: any = await sequelize.query(
+      "CALL spu_get_user_storage_stats(:uid)",
+      {
+        replacements: { uid: uid_user },
+        type: QueryTypes.RAW,
+      },
+    );
+
+    res.json({ success: true, stats });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
 
 export const downloadFile = async (req: Request, res: Response) => {
   try {
-    const { fileName, location } = req.query;
+    const { fileName, location, cloud_url } = req.query;
+    if (!fileName || !location)
+      return res.status(400).json({ message: "missing data" });
 
-    if (!fileName || !location) {
-      return res.status(400).json({ message: "missing fileName or location" });
-    }
+    if (location === "cloud" || location === "both") {
+      if (cloud_url) return res.redirect(cloud_url as string);
 
-    if (location === "cloud") {
       const { uid_user } = req.query;
       const file = bucket.file(`uploads/${uid_user}/${fileName}`);
       const [url] = await file.getSignedUrl({
@@ -257,56 +280,10 @@ export const downloadFile = async (req: Request, res: Response) => {
     }
 
     if (location === "local") {
-      const bridgeBaseUrl = getBridgeUrl();
-      const directCloudflareUrl = `${bridgeBaseUrl}/api/bridge/download/${fileName}`;
-
-      console.log(`📡 Redirecting to Cloudflare Tunnel: ${fileName}`);
-
-      return res.redirect(directCloudflareUrl);
+      return res.redirect(`${getBridgeUrl()}/api/bridge/download/${fileName}`);
     }
 
     res.status(400).json({ message: "invalid location" });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-export const getFilesSortedByMostRecent = async (
-  req: Request,
-  res: Response,
-) => {
-  try {
-    const { uid_user } = req.query;
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = 20;
-    const offset = (page - 1) * limit;
-
-    if (!uid_user)
-      return res.status(400).json({ message: "uid_user is required" });
-
-    const filesInDb: any = await sequelize.query(
-      "CALL spu_list_user_files(:uid, :limit, :offset)",
-      {
-        replacements: { uid: uid_user, limit, offset },
-        type: QueryTypes.RAW,
-      },
-    );
-
-    const rows = Array.isArray(filesInDb) ? filesInDb : [];
-    if (rows.length === 0) return res.json({ page, total: 0, data: [] });
-
-    const finalData = rows.map((dbFile: any) => ({
-      id: dbFile.id_file,
-      name: dbFile.original_name,
-      extension: dbFile.extension,
-      category: dbFile.category,
-      location: dbFile.location,
-      createdAt: dbFile.created_at,
-      size: dbFile.size || 0,
-      isAvailable: true,
-    }));
-
-    res.json({ success: true, page, count: finalData.length, data: finalData });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
