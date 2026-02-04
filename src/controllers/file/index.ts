@@ -15,6 +15,7 @@ const getBridgeUrl = () => {
 
 const getHeaders = (form?: FormData) => ({
   ...(form ? form.getHeaders() : {}),
+  "x-bridge-key": process.env.BRIDGE_API_KEY,
   "bypass-tunnel-reminder": "true",
   "cf-skip-browser-warning": "true",
   "User-Agent":
@@ -260,6 +261,7 @@ export const downloadFile = async (req: Request, res: Response) => {
       const directCloudflareUrl = `${bridgeBaseUrl}/api/bridge/download/${fileName}`;
 
       console.log(`📡 Redirecting to Cloudflare Tunnel: ${fileName}`);
+
       return res.redirect(directCloudflareUrl);
     }
 
