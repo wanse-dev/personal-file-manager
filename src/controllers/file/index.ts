@@ -350,18 +350,25 @@ export const syncRemove = async (req: Request, res: Response) => {
     if (folder_name) {
       const parts = folder_name.split("/");
       let currentParentId = null;
+
       for (const part of parts) {
-        const folder: any = await sequelize.query(
+        const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
             replacements: { name: part, uid: uid_user, pId: currentParentId },
             type: QueryTypes.SELECT,
           },
         );
-        if (folder.length > 0) currentParentId = folder[0].id_folder;
-        else {
-          currentParentId = null;
-          break;
+
+        if (folder) {
+          currentParentId = folder.id_folder;
+        } else {
+          console.log(
+            `[SYNC-FILE] Ignore: Path ${folder_name} no longer exists.`,
+          );
+          return res
+            .status(200)
+            .json({ success: true, message: "Ignored by cascade" });
         }
       }
       folderId = currentParentId;
@@ -377,6 +384,7 @@ export const syncRemove = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true });
   } catch (error: any) {
+    console.error("Error in syncRemove:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
