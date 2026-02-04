@@ -201,23 +201,36 @@ export const syncAdd = async (req: Request, res: Response) => {
       id_folder,
       folder_name,
     } = req.body;
-
-    if (!fileName || !uid_user) {
+    if (!fileName || !uid_user)
       return res.status(400).json({ message: "missing data" });
-    }
 
-    // --- lógica de resolución de carpeta ---
     let folderId = id_folder || null;
 
     if (!folderId && folder_name) {
-      const folder: any = await sequelize.query(
-        "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
-        {
-          replacements: { name: folder_name, uid: uid_user },
-          type: QueryTypes.SELECT,
-        },
-      );
-      if (folder.length > 0) folderId = folder[0].id_folder;
+      const parts = folder_name.split(/\/|\\/);
+      let currentParentId = null;
+
+      for (const part of parts) {
+        const folder: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parentId OR (parent_id IS NULL AND :parentId IS NULL)) LIMIT 1",
+          {
+            replacements: {
+              name: part,
+              uid: uid_user,
+              parentId: currentParentId,
+            },
+            type: QueryTypes.SELECT,
+          },
+        );
+
+        if (folder.length > 0) {
+          currentParentId = folder[0].id_folder;
+        } else {
+          currentParentId = null;
+          break;
+        }
+      }
+      folderId = currentParentId;
     }
 
     await sequelize.query(
@@ -237,7 +250,9 @@ export const syncAdd = async (req: Request, res: Response) => {
       },
     );
 
-    res.status(201).json({ success: true, message: "File registered" });
+    res
+      .status(201)
+      .json({ success: true, message: "File registered in subfolder" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
