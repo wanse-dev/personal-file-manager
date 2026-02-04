@@ -39,26 +39,44 @@ export const createFolder = async (req: Request, res: Response) => {
       },
     );
 
-    try {
-      let fullPath = name;
-      if (parent_id) {
-        const [parent]: any = await sequelize.query(
-          "SELECT name FROM folders WHERE id_folder = :id LIMIT 1",
-          { replacements: { id: parent_id }, type: QueryTypes.SELECT },
-        );
-        if (parent) fullPath = `${parent.name}/${name}`;
-      }
+    const newFolderId = result.id_folder;
 
+    const [pathResult]: any = await sequelize.query(
+      `
+      WITH RECURSIVE folder_path AS (
+        SELECT id_folder, name, parent_id, CAST(name AS CHAR(500)) AS full_path
+        FROM folders
+        WHERE id_folder = :id AND uid_user = :uid
+        UNION ALL
+        SELECT f.id_folder, f.name, f.parent_id, CONCAT(f.name, '/', fp.full_path)
+        FROM folders f
+        INNER JOIN folder_path fp ON f.id_folder = fp.parent_id
+      )
+      SELECT full_path FROM folder_path ORDER BY LENGTH(full_path) DESC LIMIT 1;
+    `,
+      {
+        replacements: { id: newFolderId, uid: uid_user },
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    const fullPathForBridge = pathResult?.full_path || name;
+
+    try {
       await axios.post(
         `${getBridgeUrl()}/api/bridge/create-folder`,
-        { folder_name: fullPath },
+        { folder_name: fullPathForBridge },
         { headers: getHeaders(), timeout: 4000 },
       );
     } catch (e: any) {
       console.error("Bridge Sync Error:", e.message);
     }
 
-    res.status(201).json({ success: true, id_folder: result.id_folder });
+    res.status(201).json({
+      success: true,
+      id_folder: newFolderId,
+      path: fullPathForBridge,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -66,18 +84,33 @@ export const createFolder = async (req: Request, res: Response) => {
 
 export const removeFolder = async (req: Request, res: Response) => {
   try {
-    const { id_folder, name, uid_user } = req.body;
-    if (!id_folder || !name || !uid_user)
+    const { id_folder, uid_user } = req.body;
+    if (!id_folder || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
-    let fullPathToDelete = name;
-    const [folderInfo]: any = await sequelize.query(
-      "SELECT p.name as parentName FROM folders f LEFT JOIN folders p ON f.parent_id = p.id_folder WHERE f.id_folder = :id",
-      { replacements: { id: id_folder }, type: QueryTypes.SELECT },
+    const [pathResult]: any = await sequelize.query(
+      `
+      WITH RECURSIVE folder_path AS (
+        SELECT id_folder, name, parent_id, name AS full_path
+        FROM folders
+        WHERE id_folder = :id AND uid_user = :uid
+        UNION ALL
+        SELECT f.id_folder, f.name, f.parent_id, CONCAT(f.name, '/', fp.full_path)
+        FROM folders f
+        INNER JOIN folder_path fp ON f.id_folder = fp.parent_id
+      )
+      SELECT full_path FROM folder_path ORDER BY LENGTH(full_path) DESC LIMIT 1;
+    `,
+      {
+        replacements: { id: id_folder, uid: uid_user },
+        type: QueryTypes.SELECT,
+      },
     );
 
-    if (folderInfo?.parentName) {
-      fullPathToDelete = `${folderInfo.parentName}/${name}`;
+    const fullPathToDelete = pathResult?.full_path;
+
+    if (!fullPathToDelete) {
+      return res.status(404).json({ message: "Folder not found in DB" });
     }
 
     try {
@@ -95,7 +128,7 @@ export const removeFolder = async (req: Request, res: Response) => {
       { replacements: { id: id_folder, uid: uid_user }, type: QueryTypes.RAW },
     );
 
-    res.status(200).json({ success: true, message: "Folder deleted" });
+    res.status(200).json({ success: true, path_deleted: fullPathToDelete });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
