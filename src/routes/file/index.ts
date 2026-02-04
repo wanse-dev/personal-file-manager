@@ -7,6 +7,7 @@ import {
   syncFolder,
   removeFolderSync,
   createFolder,
+  removeFolder,
   getContent,
   getStorageStats,
   downloadFile,
@@ -20,6 +21,7 @@ router.delete("/remove", removeFile);
 router.get("/download", downloadFile);
 
 router.post("/folder/create", createFolder);
+router.delete("/folder/remove", removeFolder);
 router.get("/content", getContent);
 router.get("/stats", getStorageStats);
 

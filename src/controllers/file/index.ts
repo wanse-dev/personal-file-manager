@@ -39,7 +39,74 @@ export const createFolder = async (req: Request, res: Response) => {
       },
     );
 
-    res.status(201).json({ success: true, id_folder: result.id_folder });
+    try {
+      let folderPath = name;
+
+      if (parent_id) {
+        const [parent]: any = await sequelize.query(
+          "SELECT name FROM folders WHERE id_folder = :id LIMIT 1",
+          { replacements: { id: parent_id }, type: QueryTypes.SELECT },
+        );
+        if (parent) {
+          folderPath = `${parent.name}/${name}`;
+        }
+      }
+
+      await axios.post(
+        `${getBridgeUrl()}/api/bridge/create-folder`,
+        { folder_name: folderPath },
+        {
+          headers: getHeaders(),
+          timeout: 4000,
+        },
+      );
+    } catch (bridgeError: any) {
+      console.error("Bridge folder creation failed:", bridgeError.message);
+    }
+
+    res.status(201).json({
+      success: true,
+      id_folder: result.id_folder,
+      message: "Folder created in DB and sync command sent to Bridge",
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const removeFolder = async (req: Request, res: Response) => {
+  try {
+    const { id_folder, name, uid_user } = req.body;
+
+    if (!id_folder || !name || !uid_user) {
+      return res.status(400).json({ message: "missing data" });
+    }
+
+    try {
+      await axios.delete(`${getBridgeUrl()}/sync-delete`, {
+        data: { fileName: name, uid_user },
+        headers: getHeaders(),
+        timeout: 5000,
+      });
+    } catch (bridgeError: any) {
+      console.error(
+        "Fallo el borrado físico en el Bridge:",
+        bridgeError.message,
+      );
+    }
+
+    const [result]: any = await sequelize.query(
+      "DELETE FROM folders WHERE id_folder = :id AND uid_user = :uid",
+      {
+        replacements: { id: id_folder, uid: uid_user },
+        type: QueryTypes.RAW,
+      },
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Folder deleted from DB and command sent to Bridge",
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
