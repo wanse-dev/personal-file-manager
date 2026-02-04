@@ -295,40 +295,16 @@ export const getFilesSortedByMostRecent = async (
     const rows = Array.isArray(filesInDb) ? filesInDb : [];
     if (rows.length === 0) return res.json({ page, total: 0, data: [] });
 
-    const localFileNames = rows
-      .filter((f: any) => f.location === "local")
-      .map((f: any) => f.original_name);
-
-    let localDetails: any[] = [];
-    if (localFileNames.length > 0) {
-      try {
-        const bridgeRes = await axios.post(
-          `${getBridgeUrl()}/api/bridge/batch-info`,
-          { files: localFileNames },
-          { headers: getHeaders() },
-        );
-        localDetails = bridgeRes.data;
-      } catch (err) {
-        console.error("⚠️ Bridge offline.");
-      }
-    }
-
-    const finalData = rows.map((dbFile: any) => {
-      const details = localDetails.find(
-        (ld: any) => ld.name === dbFile.original_name,
-      );
-      return {
-        id: dbFile.id_file,
-        name: dbFile.original_name,
-        extension: dbFile.extension,
-        category: dbFile.category,
-        location: dbFile.location,
-        createdAt: dbFile.created_at,
-        size: details?.size || 0,
-        isAvailable:
-          dbFile.location === "local" ? !!details && !details.error : true,
-      };
-    });
+    const finalData = rows.map((dbFile: any) => ({
+      id: dbFile.id_file,
+      name: dbFile.original_name,
+      extension: dbFile.extension,
+      category: dbFile.category,
+      location: dbFile.location,
+      createdAt: dbFile.created_at,
+      size: dbFile.size || 0,
+      isAvailable: true,
+    }));
 
     res.json({ success: true, page, count: finalData.length, data: finalData });
   } catch (error: any) {
