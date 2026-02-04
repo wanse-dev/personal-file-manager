@@ -337,10 +337,12 @@ export const syncFolder = async (req: Request, res: Response) => {
 export const removeFolderSync = async (req: Request, res: Response) => {
   try {
     const { name, uid_user } = req.body;
-    if (!name || !uid_user)
-      return res.status(400).json({ message: "missing data" });
 
-    const [result]: any = await sequelize.query(
+    if (!name || !uid_user) {
+      return res.status(400).json({ message: "Missing required folder data" });
+    }
+
+    await sequelize.query(
       "DELETE FROM folders WHERE name = :name AND uid_user = :uid",
       {
         replacements: { name, uid: uid_user },
@@ -348,7 +350,7 @@ export const removeFolderSync = async (req: Request, res: Response) => {
       },
     );
 
-    res.status(200).json({ success: true, message: "Folder removed from DB" });
+    res.status(200).json({ success: true, message: "Folder sync-deleted" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
