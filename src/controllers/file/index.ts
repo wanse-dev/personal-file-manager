@@ -209,7 +209,6 @@ export const syncAdd = async (req: Request, res: Response) => {
     if (!folderId && folder_name) {
       const parts = folder_name.split(/\/|\\/);
       let currentParentId = null;
-
       for (const part of parts) {
         const folder: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parentId OR (parent_id IS NULL AND :parentId IS NULL)) LIMIT 1",
@@ -222,10 +221,8 @@ export const syncAdd = async (req: Request, res: Response) => {
             type: QueryTypes.SELECT,
           },
         );
-
-        if (folder.length > 0) {
-          currentParentId = folder[0].id_folder;
-        } else {
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else {
           currentParentId = null;
           break;
         }
@@ -250,29 +247,7 @@ export const syncAdd = async (req: Request, res: Response) => {
       },
     );
 
-    res
-      .status(201)
-      .json({ success: true, message: "File registered in subfolder" });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-export const syncRemove = async (req: Request, res: Response) => {
-  try {
-    const { fileName, uid_user } = req.body;
-    if (!fileName || !uid_user)
-      return res.status(400).json({ message: "missing data" });
-
-    const [result]: any = await sequelize.query(
-      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid",
-      {
-        replacements: { name: fileName, uid: uid_user },
-        type: QueryTypes.RAW,
-      },
-    );
-
-    res.status(200).json({ success: true, message: "File sync-deleted" });
+    res.status(201).json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -285,11 +260,9 @@ export const syncFolder = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "missing data" });
 
     let parentId = null;
-
     if (parent_name) {
       const parts = parent_name.split(/\/|\\/);
       let currentParentId = null;
-
       for (const part of parts) {
         const folder: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
@@ -298,10 +271,8 @@ export const syncFolder = async (req: Request, res: Response) => {
             type: QueryTypes.SELECT,
           },
         );
-
-        if (folder.length > 0) {
-          currentParentId = folder[0].id_folder;
-        } else {
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else {
           currentParentId = null;
           break;
         }
@@ -317,18 +288,35 @@ export const syncFolder = async (req: Request, res: Response) => {
       },
     );
 
-    if (existingFolder.length > 0) {
-      return res
-        .status(200)
-        .json({ success: true, message: "Folder already exists" });
-    }
+    if (existingFolder.length > 0)
+      return res.status(200).json({ success: true });
 
     await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
       replacements: { name, parent: parentId, uid: uid_user },
       type: QueryTypes.RAW,
     });
 
-    res.status(201).json({ success: true, message: "Folder synced" });
+    res.status(201).json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const syncRemove = async (req: Request, res: Response) => {
+  try {
+    const { fileName, uid_user } = req.body;
+
+    if (!fileName || !uid_user)
+      return res
+        .status(200)
+        .json({ success: false, message: "No file data received" });
+
+    await sequelize.query(
+      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid",
+      { replacements: { name: fileName, uid: uid_user }, type: QueryTypes.RAW },
+    );
+
+    res.status(200).json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -338,19 +326,17 @@ export const removeFolderSync = async (req: Request, res: Response) => {
   try {
     const { name, uid_user } = req.body;
 
-    if (!name || !uid_user) {
-      return res.status(400).json({ message: "Missing required folder data" });
-    }
+    if (!name || !uid_user)
+      return res
+        .status(200)
+        .json({ success: false, message: "No folder data received" });
 
     await sequelize.query(
       "DELETE FROM folders WHERE name = :name AND uid_user = :uid",
-      {
-        replacements: { name, uid: uid_user },
-        type: QueryTypes.RAW,
-      },
+      { replacements: { name, uid: uid_user }, type: QueryTypes.RAW },
     );
 
-    res.status(200).json({ success: true, message: "Folder sync-deleted" });
+    res.status(200).json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
