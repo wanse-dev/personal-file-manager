@@ -41,26 +41,33 @@ export const createFolder = async (req: Request, res: Response) => {
 
     const newFolderId = result.id_folder;
 
-    const [pathResult]: any = await sequelize.query(
-      `
-      WITH RECURSIVE folder_path AS (
-        SELECT id_folder, name, parent_id, CAST(name AS CHAR(500)) AS full_path
-        FROM folders
-        WHERE id_folder = :id AND uid_user = :uid
-        UNION ALL
-        SELECT f.id_folder, f.name, f.parent_id, CONCAT(f.name, '/', fp.full_path)
-        FROM folders f
-        INNER JOIN folder_path fp ON f.id_folder = fp.parent_id
-      )
-      SELECT full_path FROM folder_path ORDER BY LENGTH(full_path) DESC LIMIT 1;
-    `,
-      {
-        replacements: { id: newFolderId, uid: uid_user },
-        type: QueryTypes.SELECT,
-      },
-    );
+    // se reconstruye el PATH
+    let fullPathParts: string[] = [];
+    let currentId = newFolderId;
+    let foundRoot = false;
 
-    const fullPathForBridge = pathResult?.full_path || name;
+    while (!foundRoot) {
+      const [folder]: any = await sequelize.query(
+        "SELECT name, parent_id FROM folders WHERE id_folder = :id AND uid_user = :uid LIMIT 1",
+        {
+          replacements: { id: currentId, uid: uid_user },
+          type: QueryTypes.SELECT,
+        },
+      );
+
+      if (folder) {
+        fullPathParts.unshift(folder.name);
+        if (folder.parent_id) {
+          currentId = folder.parent_id;
+        } else {
+          foundRoot = true;
+        }
+      } else {
+        foundRoot = true;
+      }
+    }
+
+    const fullPathForBridge = fullPathParts.join("/");
 
     try {
       await axios.post(
@@ -88,28 +95,35 @@ export const removeFolder = async (req: Request, res: Response) => {
     if (!id_folder || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
-    const [pathResult]: any = await sequelize.query(
-      `
-      WITH RECURSIVE folder_path AS (
-        SELECT id_folder, name, parent_id, name AS full_path
-        FROM folders
-        WHERE id_folder = :id AND uid_user = :uid
-        UNION ALL
-        SELECT f.id_folder, f.name, f.parent_id, CONCAT(f.name, '/', fp.full_path)
-        FROM folders f
-        INNER JOIN folder_path fp ON f.id_folder = fp.parent_id
-      )
-      SELECT full_path FROM folder_path ORDER BY LENGTH(full_path) DESC LIMIT 1;
-    `,
-      {
-        replacements: { id: id_folder, uid: uid_user },
-        type: QueryTypes.SELECT,
-      },
-    );
+    // se reconstruye el PATH
+    let fullPathParts: string[] = [];
+    let currentId = id_folder;
+    let foundRoot = false;
 
-    const fullPathToDelete = pathResult?.full_path;
+    while (!foundRoot) {
+      const [folder]: any = await sequelize.query(
+        "SELECT name, parent_id FROM folders WHERE id_folder = :id AND uid_user = :uid LIMIT 1",
+        {
+          replacements: { id: currentId, uid: uid_user },
+          type: QueryTypes.SELECT,
+        },
+      );
 
-    if (!fullPathToDelete) {
+      if (folder) {
+        fullPathParts.unshift(folder.name);
+        if (folder.parent_id) {
+          currentId = folder.parent_id;
+        } else {
+          foundRoot = true;
+        }
+      } else {
+        break;
+      }
+    }
+
+    const fullPathToDelete = fullPathParts.join("/");
+
+    if (fullPathParts.length === 0) {
       return res.status(404).json({ message: "Folder not found in DB" });
     }
 
