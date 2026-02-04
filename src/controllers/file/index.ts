@@ -385,28 +385,35 @@ export const removeFolderSync = async (req: Request, res: Response) => {
   try {
     const { name, uid_user, parent_name } = req.body;
 
-    if (!name || !uid_user)
-      return res
-        .status(200)
-        .json({ success: false, message: "No data received" });
+    if (!name || !uid_user) {
+      return res.status(200).json({ success: false, message: "Missing data" });
+    }
 
     let parentId = null;
 
     if (parent_name) {
       const parts = parent_name.split("/");
       let currentParentId = null;
+
       for (const part of parts) {
-        const folder: any = await sequelize.query(
+        const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
             replacements: { name: part, uid: uid_user, pId: currentParentId },
             type: QueryTypes.SELECT,
           },
         );
-        if (folder.length > 0) currentParentId = folder[0].id_folder;
-        else {
-          currentParentId = null;
-          break;
+
+        if (folder) {
+          currentParentId = folder.id_folder;
+        } else {
+          console.log(
+            `[SYNC] Ignore: Path ${parent_name} already removed from DB.`,
+          );
+          return res.status(200).json({
+            success: true,
+            message: "Ignored: Ancestor already deleted by cascade",
+          });
         }
       }
       parentId = currentParentId;
@@ -422,6 +429,7 @@ export const removeFolderSync = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true });
   } catch (error: any) {
+    console.error("Error in removeFolderSync:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
