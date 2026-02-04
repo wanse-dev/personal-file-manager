@@ -3,7 +3,9 @@ import {
   uploadFile,
   removeFile,
   syncAdd,
+  syncRemove,
   syncFolder,
+  removeFolderSync,
   createFolder,
   getContent,
   getStorageStats,
@@ -22,6 +24,8 @@ router.get("/content", getContent);
 router.get("/stats", getStorageStats);
 
 router.post("/sync-add", syncAdd);
+router.delete("/sync-remove", syncRemove);
 router.post("/sync-folder", syncFolder);
+router.delete("/sync-folder-delete", removeFolderSync);
 
 export default router;
