@@ -319,9 +319,9 @@ export const syncAdd = async (req: Request, res: Response) => {
     }
 
     const [existing]: any = await sequelize.query(
-      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
+      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid AND size = :size LIMIT 1",
       {
-        replacements: { name: fileName, uid: uid_user },
+        replacements: { name: fileName, uid: uid_user, size: size || 0 },
         type: QueryTypes.SELECT,
       },
     );
