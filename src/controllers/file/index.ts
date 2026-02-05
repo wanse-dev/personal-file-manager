@@ -264,15 +264,25 @@ export const syncFolder = async (req: Request, res: Response) => {
       parentId = currentParentId;
     }
 
-    const existing: any = await sequelize.query(
-      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL)) LIMIT 1",
-      {
-        replacements: { name, uid: uid_user, parent: parentId },
-        type: QueryTypes.SELECT,
-      },
+    const [existing]: any = await sequelize.query(
+      "SELECT id_folder, parent_id FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
+      { replacements: { name, uid: uid_user }, type: QueryTypes.SELECT },
     );
 
-    if (existing.length > 0) return res.status(200).json({ success: true });
+    if (existing) {
+      if (existing.parent_id !== parentId) {
+        await sequelize.query(
+          "UPDATE folders SET parent_id = :parentId WHERE id_folder = :id",
+          {
+            replacements: { parentId, id: existing.id_folder },
+            type: QueryTypes.RAW,
+          },
+        );
+      }
+      return res
+        .status(200)
+        .json({ success: true, message: "Folder moved/exists" });
+    }
 
     await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
       replacements: { name, parent: parentId, uid: uid_user },
@@ -311,6 +321,25 @@ export const syncAdd = async (req: Request, res: Response) => {
         }
       }
       folderId = currentParentId;
+    }
+
+    const [existingFile]: any = await sequelize.query(
+      "SELECT id_file FROM files WHERE original_name = :name AND size = :size AND uid_user = :uid LIMIT 1",
+      {
+        replacements: { name: fileName, size: size || 0, uid: uid_user },
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    if (existingFile) {
+      await sequelize.query(
+        "UPDATE files SET id_folder = :folderId WHERE id_file = :id",
+        {
+          replacements: { folderId, id: existingFile.id_file },
+          type: QueryTypes.RAW,
+        },
+      );
+      return res.status(200).json({ success: true, message: "File moved" });
     }
 
     await sequelize.query(
