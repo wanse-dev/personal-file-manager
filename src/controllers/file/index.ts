@@ -356,36 +356,22 @@ export const syncUpsertFile = async (req: Request, res: Response) => {
 
 export const syncRemove = async (req: Request, res: Response) => {
   try {
-    const { fileName, uid_user, folder_name } = req.body;
-
-    let folderId = null;
-    if (folder_name) {
-      const parts = folder_name.split("/");
-      let currentId = null;
-      for (const part of parts) {
-        const [folder]: any = await sequelize.query(
-          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
-          {
-            replacements: { name: part, uid: uid_user, pId: currentId },
-            type: QueryTypes.SELECT,
-          },
-        );
-        if (folder) currentId = folder.id_folder;
-        else return res.status(200).json({ success: true });
-      }
-      folderId = currentId;
-    }
+    const { fileName, uid_user } = req.body;
+    if (!fileName || !uid_user)
+      return res.status(400).json({ message: "missing data" });
 
     await sequelize.query(
-      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
+      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid",
       {
-        replacements: { name: fileName, uid: uid_user, folder: folderId },
+        replacements: { name: fileName, uid: uid_user },
         type: QueryTypes.RAW,
       },
     );
 
+    console.log(`[CLEANUP] Registro de archivo eliminado: ${fileName}`);
     res.status(200).json({ success: true });
   } catch (error: any) {
+    console.error("Error en syncRemove:", error.message);
     res.status(200).json({ success: false });
   }
 };
