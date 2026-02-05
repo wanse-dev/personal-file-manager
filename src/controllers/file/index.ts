@@ -140,13 +140,30 @@ export const uploadFile = async (req: Request, res: Response) => {
     if (!file || !location || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
+    let folderRelativePath = "";
+    if (id_folder) {
+      let currentId = id_folder;
+      let parts = [];
+      let foundRoot = false;
+      while (!foundRoot) {
+        const [f]: any = await sequelize.query(
+          "SELECT name, parent_id FROM folders WHERE id_folder = :id",
+          { replacements: { id: currentId }, type: QueryTypes.SELECT },
+        );
+        if (f) {
+          parts.unshift(f.name);
+          f.parent_id ? (currentId = f.parent_id) : (foundRoot = true);
+        } else foundRoot = true;
+      }
+      folderRelativePath = parts.join("/");
+    }
+
     const category = file.mimetype.startsWith("image/")
       ? "image"
       : file.mimetype.startsWith("video/")
         ? "video"
         : "binary";
-    let finalPath = "",
-      cloudUrl = null;
+    let finalPath = "";
 
     if (location === "local") {
       const form = new FormData();
@@ -154,6 +171,7 @@ export const uploadFile = async (req: Request, res: Response) => {
         filename: file.originalname,
         contentType: file.mimetype,
       });
+      form.append("folder_path", folderRelativePath);
 
       const { data } = await axios.post(
         `${getBridgeUrl()}/upload-bridge`,
@@ -178,7 +196,7 @@ export const uploadFile = async (req: Request, res: Response) => {
           loc: location,
           folder: id_folder || null,
           uid: uid_user,
-          url: cloudUrl,
+          url: null,
         },
         type: QueryTypes.RAW,
       },
