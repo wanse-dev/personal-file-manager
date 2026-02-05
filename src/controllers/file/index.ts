@@ -384,31 +384,32 @@ export const removeFolderSync = async (req: Request, res: Response) => {
   try {
     const { name, uid_user, parent_name } = req.body;
 
-    let parentId = null;
-    if (parent_name) {
-      const parts = parent_name.split("/");
-      let currentId = null;
-      for (const part of parts) {
-        const [folder]: any = await sequelize.query(
-          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
-          {
-            replacements: { name: part, uid: uid_user, pId: currentId },
-            type: QueryTypes.SELECT,
-          },
-        );
-        if (folder) currentId = folder.id_folder;
-        else return res.status(200).json({ success: true });
+    setTimeout(async () => {
+      let parentId = null;
+      if (parent_name) {
+        const parts = parent_name.split("/");
+        let currentId = null;
+        for (const part of parts) {
+          const [folder]: any = await sequelize.query(
+            "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+            {
+              replacements: { name: part, uid: uid_user, pId: currentId },
+              type: QueryTypes.SELECT,
+            },
+          );
+          if (folder) currentId = folder.id_folder;
+        }
+        parentId = currentId;
       }
-      parentId = currentId;
-    }
 
-    await sequelize.query(
-      "DELETE FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL))",
-      {
-        replacements: { name, uid: uid_user, parent: parentId },
-        type: QueryTypes.RAW,
-      },
-    );
+      await sequelize.query(
+        "DELETE FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL))",
+        {
+          replacements: { name, uid: uid_user, parent: parentId },
+          type: QueryTypes.RAW,
+        },
+      );
+    }, 1500);
 
     res.status(200).json({ success: true });
   } catch (error: any) {
