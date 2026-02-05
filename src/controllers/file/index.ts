@@ -248,14 +248,14 @@ export const syncFolder = async (req: Request, res: Response) => {
       const parts = parent_name.split("/");
       let currentParentId = null;
       for (const part of parts) {
-        const folder: any = await sequelize.query(
+        const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
             replacements: { name: part, uid: uid_user, pId: currentParentId },
             type: QueryTypes.SELECT,
           },
         );
-        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        if (folder) currentParentId = folder.id_folder;
         else {
           currentParentId = null;
           break;
@@ -300,14 +300,14 @@ export const syncAdd = async (req: Request, res: Response) => {
       const parts = folder_name.split("/");
       let currentParentId = null;
       for (const part of parts) {
-        const folder: any = await sequelize.query(
+        const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
             replacements: { name: part, uid: uid_user, pId: currentParentId },
             type: QueryTypes.SELECT,
           },
         );
-        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        if (folder) currentParentId = folder.id_folder;
         else {
           currentParentId = null;
           break;
@@ -361,31 +361,33 @@ export const syncRemove = async (req: Request, res: Response) => {
   try {
     const { fileName, uid_user, folder_name } = req.body;
 
-    let folderId = null;
-    if (folder_name) {
-      const parts = folder_name.split("/");
-      let currentParentId = null;
-      for (const part of parts) {
-        const folder: any = await sequelize.query(
-          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
-          {
-            replacements: { name: part, uid: uid_user, pId: currentParentId },
-            type: QueryTypes.SELECT,
-          },
-        );
-        if (folder.length > 0) currentParentId = folder[0].id_folder;
-        else return res.status(200).json({ success: true });
+    setTimeout(async () => {
+      let folderId = null;
+      if (folder_name) {
+        const parts = folder_name.split("/");
+        let currentParentId = null;
+        for (const part of parts) {
+          const [folder]: any = await sequelize.query(
+            "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+            {
+              replacements: { name: part, uid: uid_user, pId: currentParentId },
+              type: QueryTypes.SELECT,
+            },
+          );
+          if (folder) currentParentId = folder.id_folder;
+          else return;
+        }
+        folderId = currentParentId;
       }
-      folderId = currentParentId;
-    }
 
-    await sequelize.query(
-      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
-      {
-        replacements: { name: fileName, uid: uid_user, folder: folderId },
-        type: QueryTypes.RAW,
-      },
-    );
+      await sequelize.query(
+        "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
+        {
+          replacements: { name: fileName, uid: uid_user, folder: folderId },
+          type: QueryTypes.RAW,
+        },
+      );
+    }, 2500);
 
     res.status(200).json({ success: true });
   } catch (error: any) {
@@ -403,14 +405,14 @@ export const removeFolderSync = async (req: Request, res: Response) => {
         const parts = parent_name.split("/");
         let currentParentId = null;
         for (const part of parts) {
-          const folder: any = await sequelize.query(
+          const [folder]: any = await sequelize.query(
             "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
             {
               replacements: { name: part, uid: uid_user, pId: currentParentId },
               type: QueryTypes.SELECT,
             },
           );
-          if (folder.length > 0) currentParentId = folder[0].id_folder;
+          if (folder) currentParentId = folder.id_folder;
           else return;
         }
         parentId = currentParentId;
