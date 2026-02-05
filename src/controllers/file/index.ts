@@ -479,16 +479,62 @@ export const getStorageStats = async (req: Request, res: Response) => {
 
 export const downloadFile = async (req: Request, res: Response) => {
   try {
-    const { fileName, location } = req.query;
-    if (!fileName || !location)
+    const { id_file, location, uid_user } = req.query;
+    if (!id_file || !location || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
     if (location === "local") {
-      return res.redirect(`${getBridgeUrl()}/api/bridge/download/${fileName}`);
+      const [file]: any = await sequelize.query(
+        "SELECT original_name, id_folder FROM files WHERE id_file = :id AND uid_user = :uid LIMIT 1",
+        {
+          replacements: { id: id_file, uid: uid_user },
+          type: QueryTypes.SELECT,
+        },
+      );
+
+      if (!file) return res.status(404).json({ message: "File not found" });
+
+      let fullPathParts: string[] = [];
+      let currentFolderId = file.id_folder;
+      let foundRoot = false;
+
+      if (!currentFolderId) {
+        foundRoot = true;
+      }
+
+      while (!foundRoot) {
+        const [folder]: any = await sequelize.query(
+          "SELECT name, parent_id FROM folders WHERE id_folder = :id AND uid_user = :uid LIMIT 1",
+          {
+            replacements: { id: currentFolderId, uid: uid_user },
+            type: QueryTypes.SELECT,
+          },
+        );
+
+        if (folder) {
+          fullPathParts.unshift(folder.name);
+          if (folder.parent_id) {
+            currentFolderId = folder.parent_id;
+          } else {
+            foundRoot = true;
+          }
+        } else {
+          foundRoot = true;
+        }
+      }
+
+      const folderPath = fullPathParts.join("/");
+      const finalFilePath = folderPath
+        ? `${folderPath}/${file.original_name}`
+        : file.original_name;
+
+      const bridgeUrl = `${getBridgeUrl()}/api/bridge/download?path=${encodeURIComponent(finalFilePath)}`;
+
+      console.log(`REDIRECTING DOWNLOAD: ${finalFilePath}`, "SYSTEM");
+      return res.redirect(bridgeUrl);
     }
-    res
-      .status(400)
-      .json({ message: "cloud download not implemented in this snippet" });
+
+    res.status(400).json({ message: "Cloud download not implemented" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
