@@ -237,51 +237,61 @@ export const removeFile = async (req: Request, res: Response) => {
 
 export const syncFolder = async (req: Request, res: Response) => {
   try {
-    const { name, parent_name, uid_user } = req.body;
+    const { name, parent_name, uid_user, old_name } = req.body;
     if (!name || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
     let parentId = null;
     if (parent_name) {
       const parts = parent_name.split("/");
-      let currentParentId = null;
+      let currentId = null;
       for (const part of parts) {
         const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
-            replacements: { name: part, uid: uid_user, pId: currentParentId },
+            replacements: { name: part, uid: uid_user, pId: currentId },
             type: QueryTypes.SELECT,
           },
         );
-        if (folder) currentParentId = folder.id_folder;
-        else {
-          currentParentId = null;
+        if (folder) {
+          currentId = folder.id_folder;
+        } else {
+          currentId = null;
           break;
         }
       }
-      parentId = currentParentId;
+      parentId = currentId;
     }
 
-    const [existing]: any = await sequelize.query(
-      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parentId OR (parent_id IS NULL AND :parentId IS NULL)) LIMIT 1",
+    if (old_name) {
+      const [updated]: any = await sequelize.query(
+        "UPDATE folders SET name = :name, parent_id = :parentId WHERE name = :oldName AND uid_user = :uid",
+        {
+          replacements: { name, parentId, oldName: old_name, uid: uid_user },
+          type: QueryTypes.RAW,
+        },
+      );
+      console.log(
+        `[SYNC] Carpeta renombrada de ${old_name} a ${name} (ID mantenido)`,
+      );
+      return res.status(200).json({ success: true, message: "Folder renamed" });
+    }
+
+    const [result]: any = await sequelize.query(
+      "CALL spu_upsert_folder(:name, :parent, :uid)",
       {
-        replacements: { name, uid: uid_user, parentId },
-        type: QueryTypes.SELECT,
+        replacements: { name, parent: parentId, uid: uid_user },
+        type: QueryTypes.RAW,
       },
     );
 
-    if (existing) {
-      return res
-        .status(200)
-        .json({ success: true, message: "Folder already exists" });
-    }
-
-    await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
-      replacements: { name, parent: parentId, uid: uid_user },
-      type: QueryTypes.RAW,
+    res.status(200).json({
+      success: true,
+      id_folder: result.id_folder,
+      action: result.action,
     });
-    res.status(201).json({ success: true });
   } catch (error: any) {
+    console.error("Error en syncFolder:", error.message);
     res.status(200).json({ success: false });
   }
 };
