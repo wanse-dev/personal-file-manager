@@ -436,6 +436,51 @@ export const removeFolderSync = async (req: Request, res: Response) => {
   }
 };
 
+export const syncMove = async (req: Request, res: Response) => {
+  try {
+    const { name, new_folder, uid_user, is_folder } = req.body;
+
+    let folderId = null;
+    if (new_folder) {
+      const parts = new_folder.split("/");
+      let currentId = null;
+      for (const part of parts) {
+        const [f]: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (f) currentId = f.id_folder;
+      }
+      folderId = currentId;
+    }
+
+    if (is_folder) {
+      await sequelize.query(
+        "UPDATE folders SET parent_id = :folderId WHERE name = :name AND uid_user = :uid",
+        {
+          replacements: { folderId, name, uid: uid_user },
+          type: QueryTypes.RAW,
+        },
+      );
+    } else {
+      await sequelize.query(
+        "UPDATE files SET id_folder = :folderId WHERE original_name = :name AND uid_user = :uid",
+        {
+          replacements: { folderId, name, uid: uid_user },
+          type: QueryTypes.RAW,
+        },
+      );
+    }
+
+    res.status(200).json({ success: true, message: "Atomic move successful" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // --- lectura y stats ---
 
 export const getContent = async (req: Request, res: Response) => {
