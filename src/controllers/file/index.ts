@@ -266,7 +266,10 @@ export const syncFolder = async (req: Request, res: Response) => {
 
     const [existing]: any = await sequelize.query(
       "SELECT id_folder, parent_id FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
-      { replacements: { name, uid: uid_user }, type: QueryTypes.SELECT },
+      {
+        replacements: { name, uid: uid_user },
+        type: QueryTypes.SELECT,
+      },
     );
 
     if (existing) {
@@ -278,10 +281,13 @@ export const syncFolder = async (req: Request, res: Response) => {
             type: QueryTypes.RAW,
           },
         );
+        console.log(
+          `[SYNC] Folder '${name}' moved to new parent (ID: ${existing.id_folder})`,
+        );
       }
       return res
         .status(200)
-        .json({ success: true, message: "Folder moved/exists" });
+        .json({ success: true, message: "Folder moved/already exists" });
     }
 
     await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
@@ -299,8 +305,6 @@ export const syncAdd = async (req: Request, res: Response) => {
   try {
     const { fileName, extension, size, category, uid_user, folder_name } =
       req.body;
-    if (!fileName || !uid_user)
-      return res.status(400).json({ message: "missing data" });
 
     let folderId = null;
     if (folder_name) {
@@ -324,22 +328,25 @@ export const syncAdd = async (req: Request, res: Response) => {
     }
 
     const [existingFile]: any = await sequelize.query(
-      "SELECT id_file FROM files WHERE original_name = :name AND size = :size AND uid_user = :uid LIMIT 1",
+      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
       {
-        replacements: { name: fileName, size: size || 0, uid: uid_user },
+        replacements: { name: fileName, uid: uid_user },
         type: QueryTypes.SELECT,
       },
     );
 
     if (existingFile) {
       await sequelize.query(
-        "UPDATE files SET id_folder = :folderId WHERE id_file = :id",
+        "UPDATE files SET id_folder = :folderId, size = :size, updated_at = NOW() WHERE id_file = :id",
         {
-          replacements: { folderId, id: existingFile.id_file },
+          replacements: { folderId, size: size || 0, id: existingFile.id_file },
           type: QueryTypes.RAW,
         },
       );
-      return res.status(200).json({ success: true, message: "File moved" });
+      console.log(
+        `[SYNC] File ${fileName} moved/updated (ID: ${existingFile.id_file})`,
+      );
+      return res.status(200).json({ success: true, message: "Updated" });
     }
 
     await sequelize.query(
