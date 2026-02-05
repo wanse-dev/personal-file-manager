@@ -213,15 +213,46 @@ export const uploadFile = async (req: Request, res: Response) => {
 
 export const removeFile = async (req: Request, res: Response) => {
   try {
-    const { id_file, fileName, location, uid_user } = req.body;
-    if (!id_file || !fileName || !location || !uid_user)
+    const { id_file, location, uid_user } = req.body;
+    if (!id_file || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
+    const [file]: any = await sequelize.query(
+      "SELECT original_name, id_folder FROM files WHERE id_file = :id AND uid_user = :uid LIMIT 1",
+      { replacements: { id: id_file, uid: uid_user }, type: QueryTypes.SELECT },
+    );
+
+    if (!file) return res.status(404).json({ message: "File not found" });
+
+    let fullPathParts = [],
+      currentId = file.id_folder,
+      foundRoot = !currentId;
+    while (!foundRoot) {
+      const [folder]: any = await sequelize.query(
+        "SELECT name, parent_id FROM folders WHERE id_folder = :id",
+        { replacements: { id: currentId }, type: QueryTypes.SELECT },
+      );
+      if (folder) {
+        fullPathParts.unshift(folder.name);
+        folder.parent_id ? (currentId = folder.parent_id) : (foundRoot = true);
+      } else foundRoot = true;
+    }
+
+    const finalPath =
+      fullPathParts.length > 0
+        ? `${fullPathParts.join("/")}/${file.original_name}`
+        : file.original_name;
+
     if (location === "local") {
-      await axios.delete(`${getBridgeUrl()}/sync-delete`, {
-        data: { fileName, uid_user },
-        headers: getHeaders(),
-      });
+      try {
+        await axios.delete(`${getBridgeUrl()}/api/bridge/delete-file`, {
+          data: { path: finalPath },
+          headers: getHeaders(),
+          timeout: 5000,
+        });
+      } catch (e: any) {
+        console.error("Error borrado físico:", e.message);
+      }
     }
 
     await sequelize.query("CALL spu_delete_file(:id, :uid)", {
@@ -229,7 +260,7 @@ export const removeFile = async (req: Request, res: Response) => {
       type: QueryTypes.RAW,
     });
 
-    res.status(200).json({ success: true });
+    res.status(200).json({ success: true, deleted_path: finalPath });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
