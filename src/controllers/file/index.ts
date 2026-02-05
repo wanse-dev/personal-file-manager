@@ -264,39 +264,33 @@ export const syncFolder = async (req: Request, res: Response) => {
       parentId = currentParentId;
     }
 
-    const [existing]: any = await sequelize.query(
-      "SELECT id_folder, parent_id FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
-      {
-        replacements: { name, uid: uid_user },
-        type: QueryTypes.SELECT,
-      },
+    const [existingFolder]: any = await sequelize.query(
+      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
+      { replacements: { name, uid: uid_user }, type: QueryTypes.SELECT },
     );
 
-    if (existing) {
-      if (existing.parent_id !== parentId) {
-        await sequelize.query(
-          "UPDATE folders SET parent_id = :parentId WHERE id_folder = :id",
-          {
-            replacements: { parentId, id: existing.id_folder },
-            type: QueryTypes.RAW,
-          },
-        );
-        console.log(
-          `[SYNC] Folder '${name}' moved to new parent (ID: ${existing.id_folder})`,
-        );
-      }
+    if (existingFolder) {
+      await sequelize.query(
+        "UPDATE folders SET parent_id = :parentId WHERE id_folder = :id",
+        {
+          replacements: { parentId, id: existingFolder.id_folder },
+          type: QueryTypes.RAW,
+        },
+      );
+      console.log(`[SYNC-FOLDER] Moved: ${name} to parent ID ${parentId}`);
       return res
         .status(200)
-        .json({ success: true, message: "Folder moved/already exists" });
+        .json({ success: true, message: "Folder updated/moved" });
+    } else {
+      await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
+        replacements: { name, parent: parentId, uid: uid_user },
+        type: QueryTypes.RAW,
+      });
+      console.log(`[SYNC-FOLDER] Re-created: ${name}`);
+      return res.status(201).json({ success: true, message: "Folder created" });
     }
-
-    await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
-      replacements: { name, parent: parentId, uid: uid_user },
-      type: QueryTypes.RAW,
-    });
-
-    res.status(201).json({ success: true });
   } catch (error: any) {
+    console.error("CRITICAL ERROR IN syncFolder:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -305,6 +299,8 @@ export const syncAdd = async (req: Request, res: Response) => {
   try {
     const { fileName, extension, size, category, uid_user, folder_name } =
       req.body;
+    if (!fileName || !uid_user)
+      return res.status(400).json({ message: "missing data" });
 
     let folderId = null;
     if (folder_name) {
@@ -343,31 +339,34 @@ export const syncAdd = async (req: Request, res: Response) => {
           type: QueryTypes.RAW,
         },
       );
-      console.log(
-        `[SYNC] File ${fileName} moved/updated (ID: ${existingFile.id_file})`,
-      );
-      return res.status(200).json({ success: true, message: "Updated" });
-    }
-
-    await sequelize.query(
-      "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
-      {
-        replacements: {
-          name: fileName,
-          ext: extension || "bin",
-          size: size || 0,
-          cat: category || "binary",
-          loc: "local",
-          folder: folderId,
-          uid: uid_user,
-          url: null,
+      console.log(`[SYNC-FILE] Moved: ${fileName} to folder ID ${folderId}`);
+      return res
+        .status(200)
+        .json({ success: true, message: "File updated/moved" });
+    } else {
+      await sequelize.query(
+        "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
+        {
+          replacements: {
+            name: fileName,
+            ext: extension || "bin",
+            size: size || 0,
+            cat: category || "binary",
+            loc: "local",
+            folder: folderId,
+            uid: uid_user,
+            url: null,
+          },
+          type: QueryTypes.RAW,
         },
-        type: QueryTypes.RAW,
-      },
-    );
-
-    res.status(201).json({ success: true });
+      );
+      console.log(
+        `[SYNC-FILE] Re-created: ${fileName} in folder ID ${folderId}`,
+      );
+      return res.status(201).json({ success: true, message: "File created" });
+    }
   } catch (error: any) {
+    console.error("CRITICAL ERROR IN syncAdd:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
