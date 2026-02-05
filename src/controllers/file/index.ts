@@ -292,10 +292,8 @@ export const syncFolder = async (req: Request, res: Response) => {
 
 export const syncAdd = async (req: Request, res: Response) => {
   try {
-    const { fileName, extension, size, category, uid_user, folder_name } =
+    const { fileName, size, uid_user, folder_name, extension, category } =
       req.body;
-    if (!fileName || !uid_user)
-      return res.status(400).json({ message: "missing data" });
 
     let folderId = null;
     if (folder_name) {
@@ -319,9 +317,9 @@ export const syncAdd = async (req: Request, res: Response) => {
     }
 
     const [existing]: any = await sequelize.query(
-      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid AND size = :size LIMIT 1",
+      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
       {
-        replacements: { name: fileName, uid: uid_user, size: size || 0 },
+        replacements: { name: fileName, uid: uid_user },
         type: QueryTypes.SELECT,
       },
     );
@@ -334,7 +332,7 @@ export const syncAdd = async (req: Request, res: Response) => {
           type: QueryTypes.RAW,
         },
       );
-      return res.status(200).json({ success: true });
+      return res.status(200).json({ success: true, message: "ID Rescatado" });
     }
 
     await sequelize.query(
@@ -363,33 +361,31 @@ export const syncRemove = async (req: Request, res: Response) => {
   try {
     const { fileName, uid_user, folder_name } = req.body;
 
-    setTimeout(async () => {
-      let folderId = null;
-      if (folder_name) {
-        const parts = folder_name.split("/");
-        let currentParentId = null;
-        for (const part of parts) {
-          const folder: any = await sequelize.query(
-            "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
-            {
-              replacements: { name: part, uid: uid_user, pId: currentParentId },
-              type: QueryTypes.SELECT,
-            },
-          );
-          if (folder.length > 0) currentParentId = folder[0].id_folder;
-          else return;
-        }
-        folderId = currentParentId;
+    let folderId = null;
+    if (folder_name) {
+      const parts = folder_name.split("/");
+      let currentParentId = null;
+      for (const part of parts) {
+        const folder: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentParentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else return res.status(200).json({ success: true });
       }
+      folderId = currentParentId;
+    }
 
-      await sequelize.query(
-        "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
-        {
-          replacements: { name: fileName, uid: uid_user, folder: folderId },
-          type: QueryTypes.RAW,
-        },
-      );
-    }, 2500);
+    await sequelize.query(
+      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
+      {
+        replacements: { name: fileName, uid: uid_user, folder: folderId },
+        type: QueryTypes.RAW,
+      },
+    );
 
     res.status(200).json({ success: true });
   } catch (error: any) {
