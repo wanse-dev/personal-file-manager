@@ -264,34 +264,32 @@ export const syncFolder = async (req: Request, res: Response) => {
       parentId = currentParentId;
     }
 
-    const [existingFolder]: any = await sequelize.query(
-      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
+    const [existing]: any = await sequelize.query(
+      "SELECT id_folder, parent_id FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
       { replacements: { name, uid: uid_user }, type: QueryTypes.SELECT },
     );
 
-    if (existingFolder) {
-      await sequelize.query(
-        "UPDATE folders SET parent_id = :parentId WHERE id_folder = :id",
-        {
-          replacements: { parentId, id: existingFolder.id_folder },
-          type: QueryTypes.RAW,
-        },
-      );
-      console.log(`[SYNC-FOLDER] Moved: ${name} to parent ID ${parentId}`);
-      return res
-        .status(200)
-        .json({ success: true, message: "Folder updated/moved" });
-    } else {
-      await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
-        replacements: { name, parent: parentId, uid: uid_user },
-        type: QueryTypes.RAW,
-      });
-      console.log(`[SYNC-FOLDER] Re-created: ${name}`);
-      return res.status(201).json({ success: true, message: "Folder created" });
+    if (existing) {
+      if (existing.parent_id !== parentId) {
+        await sequelize.query(
+          "UPDATE folders SET parent_id = :parentId WHERE id_folder = :id",
+          {
+            replacements: { parentId, id: existing.id_folder },
+            type: QueryTypes.RAW,
+          },
+        );
+        console.log(`[SYNC-FOLDER] Moved: ${name} (ID: ${existing.id_folder})`);
+      }
+      return res.status(200).json({ success: true, message: "Folder updated" });
     }
+
+    await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
+      replacements: { name, parent: parentId, uid: uid_user },
+      type: QueryTypes.RAW,
+    });
+    res.status(201).json({ success: true });
   } catch (error: any) {
-    console.error("CRITICAL ERROR IN syncFolder:", error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(200).json({ success: false });
   }
 };
 
@@ -323,7 +321,7 @@ export const syncAdd = async (req: Request, res: Response) => {
       folderId = currentParentId;
     }
 
-    const [existingFile]: any = await sequelize.query(
+    const [existing]: any = await sequelize.query(
       "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
       {
         replacements: { name: fileName, uid: uid_user },
@@ -331,80 +329,61 @@ export const syncAdd = async (req: Request, res: Response) => {
       },
     );
 
-    if (existingFile) {
+    if (existing) {
       await sequelize.query(
         "UPDATE files SET id_folder = :folderId, size = :size, updated_at = NOW() WHERE id_file = :id",
         {
-          replacements: { folderId, size: size || 0, id: existingFile.id_file },
+          replacements: { folderId, size: size || 0, id: existing.id_file },
           type: QueryTypes.RAW,
         },
       );
-      console.log(`[SYNC-FILE] Moved: ${fileName} to folder ID ${folderId}`);
-      return res
-        .status(200)
-        .json({ success: true, message: "File updated/moved" });
-    } else {
-      await sequelize.query(
-        "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
-        {
-          replacements: {
-            name: fileName,
-            ext: extension || "bin",
-            size: size || 0,
-            cat: category || "binary",
-            loc: "local",
-            folder: folderId,
-            uid: uid_user,
-            url: null,
-          },
-          type: QueryTypes.RAW,
-        },
-      );
-      console.log(
-        `[SYNC-FILE] Re-created: ${fileName} in folder ID ${folderId}`,
-      );
-      return res.status(201).json({ success: true, message: "File created" });
+      return res.status(200).json({ success: true, message: "File updated" });
     }
+
+    await sequelize.query(
+      "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
+      {
+        replacements: {
+          name: fileName,
+          ext: extension || "bin",
+          size: size || 0,
+          cat: category || "binary",
+          loc: "local",
+          folder: folderId,
+          uid: uid_user,
+          url: null,
+        },
+        type: QueryTypes.RAW,
+      },
+    );
+    res.status(201).json({ success: true });
   } catch (error: any) {
-    console.error("CRITICAL ERROR IN syncAdd:", error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(200).json({ success: false });
   }
 };
 
 export const syncRemove = async (req: Request, res: Response) => {
   try {
     const { fileName, uid_user, folder_name } = req.body;
-
-    if (!fileName || !uid_user)
-      return res
-        .status(200)
-        .json({ success: false, message: "No file data received" });
+    if (!fileName || !uid_user) return res.status(200).json({ success: false });
 
     let folderId = null;
-
     if (folder_name) {
       const parts = folder_name.split("/");
       let currentParentId = null;
-
       for (const part of parts) {
-        const [folder]: any = await sequelize.query(
+        const folder: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
             replacements: { name: part, uid: uid_user, pId: currentParentId },
             type: QueryTypes.SELECT,
           },
         );
-
-        if (folder) {
-          currentParentId = folder.id_folder;
-        } else {
-          console.log(
-            `[SYNC-FILE] Ignore: Path ${folder_name} no longer exists.`,
-          );
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else
           return res
             .status(200)
-            .json({ success: true, message: "Ignored by cascade" });
-        }
+            .json({ success: true, message: "Already removed by cascade" });
       }
       folderId = currentParentId;
     }
@@ -419,45 +398,32 @@ export const syncRemove = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true });
   } catch (error: any) {
-    console.error("Error in syncRemove:", error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(200).json({ success: false });
   }
 };
 
 export const removeFolderSync = async (req: Request, res: Response) => {
   try {
     const { name, uid_user, parent_name } = req.body;
-
-    if (!name || !uid_user) {
-      return res.status(200).json({ success: false, message: "Missing data" });
-    }
+    if (!name || !uid_user) return res.status(200).json({ success: false });
 
     let parentId = null;
-
     if (parent_name) {
       const parts = parent_name.split("/");
       let currentParentId = null;
-
       for (const part of parts) {
-        const [folder]: any = await sequelize.query(
+        const folder: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
             replacements: { name: part, uid: uid_user, pId: currentParentId },
             type: QueryTypes.SELECT,
           },
         );
-
-        if (folder) {
-          currentParentId = folder.id_folder;
-        } else {
-          console.log(
-            `[SYNC] Ignore: Path ${parent_name} already removed from DB.`,
-          );
-          return res.status(200).json({
-            success: true,
-            message: "Ignored: Ancestor already deleted by cascade",
-          });
-        }
+        if (folder.length > 0) currentParentId = folder[0].id_folder;
+        else
+          return res
+            .status(200)
+            .json({ success: true, message: "Parent not found" });
       }
       parentId = currentParentId;
     }
@@ -472,8 +438,7 @@ export const removeFolderSync = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true });
   } catch (error: any) {
-    console.error("Error in removeFolderSync:", error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(200).json({ success: false });
   }
 };
 
