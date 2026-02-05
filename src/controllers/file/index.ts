@@ -290,56 +290,41 @@ export const syncFolder = async (req: Request, res: Response) => {
   }
 };
 
-export const syncAdd = async (req: Request, res: Response) => {
+export const syncUpsertFile = async (req: Request, res: Response) => {
   try {
-    const { fileName, size, uid_user, folder_name, extension, category } =
-      req.body;
+    const {
+      fileName,
+      extension,
+      size,
+      category,
+      uid_user,
+      folder_name,
+      fingerprint,
+    } = req.body;
 
     let folderId = null;
     if (folder_name) {
       const parts = folder_name.split("/");
-      let currentParentId = null;
+      let currentId = null;
       for (const part of parts) {
         const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
-            replacements: { name: part, uid: uid_user, pId: currentParentId },
+            replacements: { name: part, uid: uid_user, pId: currentId },
             type: QueryTypes.SELECT,
           },
         );
-        if (folder) currentParentId = folder.id_folder;
+        if (folder) currentId = folder.id_folder;
         else {
-          currentParentId = null;
+          currentId = null;
           break;
         }
       }
-      folderId = currentParentId;
+      folderId = currentId;
     }
 
-    const [existing]: any = await sequelize.query(
-      "SELECT id_file FROM files WHERE original_name = :name AND uid_user = :uid LIMIT 1",
-      {
-        replacements: { name: fileName, uid: uid_user },
-        type: QueryTypes.SELECT,
-      },
-    );
-
-    if (existing) {
-      await sequelize.query(
-        "UPDATE files SET id_folder = :folderId, size = :size, updated_at = NOW() WHERE id_file = :id",
-        {
-          replacements: { folderId, size: size || 0, id: existing.id_file },
-          type: QueryTypes.RAW,
-        },
-      );
-      console.log(
-        `[SYNC] Archivo ${fileName} RESCATADO (ID: ${existing.id_file})`,
-      );
-      return res.status(200).json({ success: true, message: "ID Rescatado" });
-    }
-
-    await sequelize.query(
-      "CALL spu_create_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :url)",
+    const [result]: any = await sequelize.query(
+      "CALL spu_upsert_file(:name, :ext, :size, :cat, :loc, :folder, :uid, :finger)",
       {
         replacements: {
           name: fileName,
@@ -349,12 +334,15 @@ export const syncAdd = async (req: Request, res: Response) => {
           loc: "local",
           folder: folderId,
           uid: uid_user,
-          url: null,
+          finger: fingerprint,
         },
         type: QueryTypes.RAW,
       },
     );
-    res.status(201).json({ success: true });
+
+    res
+      .status(200)
+      .json({ success: true, action: result.action, id: result.id_file });
   } catch (error: any) {
     res.status(200).json({ success: false });
   }

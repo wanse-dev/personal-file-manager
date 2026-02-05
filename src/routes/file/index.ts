@@ -2,7 +2,7 @@ import express from "express";
 import {
   uploadFile,
   removeFile,
-  syncAdd,
+  syncUpsertFile,
   syncRemove,
   syncFolder,
   removeFolderSync,
@@ -10,6 +10,7 @@ import {
   removeFolder,
   getContent,
   getStorageStats,
+  syncMove,
   downloadFile,
 } from "../../controllers/file/index.js";
 import { upload } from "../../config/multer.js";
@@ -25,9 +26,10 @@ router.delete("/folder/remove", removeFolder);
 router.get("/content", getContent);
 router.get("/stats", getStorageStats);
 
-router.post("/sync-add", syncAdd);
+router.post("/sync-upsert-file", syncUpsertFile);
 router.delete("/sync-remove", syncRemove);
 router.post("/sync-folder", syncFolder);
 router.delete("/sync-folder-delete", removeFolderSync);
+router.post("/sync-move", syncMove);
 
 export default router;
