@@ -332,6 +332,9 @@ export const syncAdd = async (req: Request, res: Response) => {
           type: QueryTypes.RAW,
         },
       );
+      console.log(
+        `[SYNC] Archivo ${fileName} RESCATADO (ID: ${existing.id_file})`,
+      );
       return res.status(200).json({ success: true, message: "ID Rescatado" });
     }
 
@@ -387,7 +390,7 @@ export const syncRemove = async (req: Request, res: Response) => {
           type: QueryTypes.RAW,
         },
       );
-    }, 2500);
+    }, 4000);
 
     res.status(200).json({ success: true });
   } catch (error: any) {
