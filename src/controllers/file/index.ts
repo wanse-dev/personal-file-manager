@@ -41,7 +41,6 @@ export const createFolder = async (req: Request, res: Response) => {
 
     const newFolderId = result.id_folder;
 
-    // se reconstruye el PATH
     let fullPathParts: string[] = [];
     let currentId = newFolderId;
     let foundRoot = false;
@@ -95,7 +94,6 @@ export const removeFolder = async (req: Request, res: Response) => {
     if (!id_folder || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
-    // se reconstruye el PATH
     let fullPathParts: string[] = [];
     let currentId = id_folder;
     let foundRoot = false;
@@ -265,19 +263,17 @@ export const syncFolder = async (req: Request, res: Response) => {
     }
 
     const [existing]: any = await sequelize.query(
-      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid LIMIT 1",
-      { replacements: { name, uid: uid_user }, type: QueryTypes.SELECT },
+      "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parentId OR (parent_id IS NULL AND :parentId IS NULL)) LIMIT 1",
+      {
+        replacements: { name, uid: uid_user, parentId },
+        type: QueryTypes.SELECT,
+      },
     );
 
     if (existing) {
-      await sequelize.query(
-        "UPDATE folders SET parent_id = :parentId WHERE id_folder = :id",
-        {
-          replacements: { parentId, id: existing.id_folder },
-          type: QueryTypes.RAW,
-        },
-      );
-      return res.status(200).json({ success: true });
+      return res
+        .status(200)
+        .json({ success: true, message: "Folder already exists" });
     }
 
     await sequelize.query("CALL spu_create_folder(:name, :parent, :uid)", {
@@ -352,33 +348,31 @@ export const syncRemove = async (req: Request, res: Response) => {
   try {
     const { fileName, uid_user, folder_name } = req.body;
 
-    setTimeout(async () => {
-      let folderId = null;
-      if (folder_name) {
-        const parts = folder_name.split("/");
-        let currentParentId = null;
-        for (const part of parts) {
-          const [folder]: any = await sequelize.query(
-            "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
-            {
-              replacements: { name: part, uid: uid_user, pId: currentParentId },
-              type: QueryTypes.SELECT,
-            },
-          );
-          if (folder) currentParentId = folder.id_folder;
-          else return;
-        }
-        folderId = currentParentId;
+    let folderId = null;
+    if (folder_name) {
+      const parts = folder_name.split("/");
+      let currentId = null;
+      for (const part of parts) {
+        const [folder]: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (folder) currentId = folder.id_folder;
+        else return res.status(200).json({ success: true });
       }
+      folderId = currentId;
+    }
 
-      await sequelize.query(
-        "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
-        {
-          replacements: { name: fileName, uid: uid_user, folder: folderId },
-          type: QueryTypes.RAW,
-        },
-      );
-    }, 4000);
+    await sequelize.query(
+      "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folder OR (id_folder IS NULL AND :folder IS NULL))",
+      {
+        replacements: { name: fileName, uid: uid_user, folder: folderId },
+        type: QueryTypes.RAW,
+      },
+    );
 
     res.status(200).json({ success: true });
   } catch (error: any) {
@@ -390,33 +384,31 @@ export const removeFolderSync = async (req: Request, res: Response) => {
   try {
     const { name, uid_user, parent_name } = req.body;
 
-    setTimeout(async () => {
-      let parentId = null;
-      if (parent_name) {
-        const parts = parent_name.split("/");
-        let currentParentId = null;
-        for (const part of parts) {
-          const [folder]: any = await sequelize.query(
-            "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
-            {
-              replacements: { name: part, uid: uid_user, pId: currentParentId },
-              type: QueryTypes.SELECT,
-            },
-          );
-          if (folder) currentParentId = folder.id_folder;
-          else return;
-        }
-        parentId = currentParentId;
+    let parentId = null;
+    if (parent_name) {
+      const parts = parent_name.split("/");
+      let currentId = null;
+      for (const part of parts) {
+        const [folder]: any = await sequelize.query(
+          "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
+          {
+            replacements: { name: part, uid: uid_user, pId: currentId },
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (folder) currentId = folder.id_folder;
+        else return res.status(200).json({ success: true });
       }
+      parentId = currentId;
+    }
 
-      await sequelize.query(
-        "DELETE FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL))",
-        {
-          replacements: { name, uid: uid_user, parent: parentId },
-          type: QueryTypes.RAW,
-        },
-      );
-    }, 3000);
+    await sequelize.query(
+      "DELETE FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL))",
+      {
+        replacements: { name, uid: uid_user, parent: parentId },
+        type: QueryTypes.RAW,
+      },
+    );
 
     res.status(200).json({ success: true });
   } catch (error: any) {
@@ -525,9 +517,7 @@ export const downloadFile = async (req: Request, res: Response) => {
       let currentFolderId = file.id_folder;
       let foundRoot = false;
 
-      if (!currentFolderId) {
-        foundRoot = true;
-      }
+      if (!currentFolderId) foundRoot = true;
 
       while (!foundRoot) {
         const [folder]: any = await sequelize.query(
@@ -557,7 +547,6 @@ export const downloadFile = async (req: Request, res: Response) => {
 
       const bridgeUrl = `${getBridgeUrl()}/api/bridge/download?path=${encodeURIComponent(finalFilePath)}`;
 
-      console.log(`REDIRECTING DOWNLOAD: ${finalFilePath}`, "SYSTEM");
       return res.redirect(bridgeUrl);
     }
 
