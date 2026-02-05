@@ -1,16 +1,15 @@
 import type { Request, Response } from "express";
 import { sequelize } from "../../database.js";
-import { bucket } from "../../config/firebase.js";
 import { QueryTypes } from "sequelize";
 import axios from "axios";
 import FormData from "form-data";
 
 // --- helpers ---
 
-const getBridgeUrl = () => {
-  let url = process.env.BRIDGE_URL || "";
-  return url.replace("/upload-bridge", "").replace(/\/+$/, "");
-};
+const getBridgeUrl = () =>
+  (process.env.BRIDGE_URL || "")
+    .replace("/upload-bridge", "")
+    .replace(/\/+$/, "");
 
 const getHeaders = (form?: FormData) => ({
   ...(form ? form.getHeaders() : {}),
@@ -39,11 +38,9 @@ export const createFolder = async (req: Request, res: Response) => {
       },
     );
 
-    const newFolderId = result.id_folder;
-
-    let fullPathParts: string[] = [];
-    let currentId = newFolderId;
-    let foundRoot = false;
+    let fullPathParts = [],
+      currentId = result.id_folder,
+      foundRoot = false;
 
     while (!foundRoot) {
       const [folder]: any = await sequelize.query(
@@ -56,14 +53,8 @@ export const createFolder = async (req: Request, res: Response) => {
 
       if (folder) {
         fullPathParts.unshift(folder.name);
-        if (folder.parent_id) {
-          currentId = folder.parent_id;
-        } else {
-          foundRoot = true;
-        }
-      } else {
-        foundRoot = true;
-      }
+        folder.parent_id ? (currentId = folder.parent_id) : (foundRoot = true);
+      } else foundRoot = true;
     }
 
     const fullPathForBridge = fullPathParts.join("/");
@@ -80,7 +71,7 @@ export const createFolder = async (req: Request, res: Response) => {
 
     res.status(201).json({
       success: true,
-      id_folder: newFolderId,
+      id_folder: result.id_folder,
       path: fullPathForBridge,
     });
   } catch (error: any) {
@@ -94,9 +85,9 @@ export const removeFolder = async (req: Request, res: Response) => {
     if (!id_folder || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
-    let fullPathParts: string[] = [];
-    let currentId = id_folder;
-    let foundRoot = false;
+    let fullPathParts = [],
+      currentId = id_folder,
+      foundRoot = false;
 
     while (!foundRoot) {
       const [folder]: any = await sequelize.query(
@@ -107,23 +98,14 @@ export const removeFolder = async (req: Request, res: Response) => {
         },
       );
 
-      if (folder) {
-        fullPathParts.unshift(folder.name);
-        if (folder.parent_id) {
-          currentId = folder.parent_id;
-        } else {
-          foundRoot = true;
-        }
-      } else {
-        break;
-      }
+      if (!folder) break;
+      fullPathParts.unshift(folder.name);
+      folder.parent_id ? (currentId = folder.parent_id) : (foundRoot = true);
     }
 
     const fullPathToDelete = fullPathParts.join("/");
-
-    if (fullPathParts.length === 0) {
+    if (!fullPathToDelete)
       return res.status(404).json({ message: "Folder not found in DB" });
-    }
 
     try {
       await axios.delete(`${getBridgeUrl()}/sync-delete`, {
@@ -131,13 +113,16 @@ export const removeFolder = async (req: Request, res: Response) => {
         headers: getHeaders(),
         timeout: 5000,
       });
-    } catch (bridgeError: any) {
-      console.error("Fallo el borrado físico:", bridgeError.message);
+    } catch (e: any) {
+      console.error("Fallo el borrado físico:", e.message);
     }
 
     await sequelize.query(
       "DELETE FROM folders WHERE id_folder = :id AND uid_user = :uid",
-      { replacements: { id: id_folder, uid: uid_user }, type: QueryTypes.RAW },
+      {
+        replacements: { id: id_folder, uid: uid_user },
+        type: QueryTypes.RAW,
+      },
     );
 
     res.status(200).json({ success: true, path_deleted: fullPathToDelete });
@@ -151,8 +136,7 @@ export const removeFolder = async (req: Request, res: Response) => {
 export const uploadFile = async (req: Request, res: Response) => {
   try {
     const file = req.file as Express.Multer.File;
-    let { location, uid_user, id_folder } = req.body;
-
+    const { location, uid_user, id_folder } = req.body;
     if (!file || !location || !uid_user)
       return res.status(400).json({ message: "missing data" });
 
@@ -161,9 +145,8 @@ export const uploadFile = async (req: Request, res: Response) => {
       : file.mimetype.startsWith("video/")
         ? "video"
         : "binary";
-
-    let finalPath = "";
-    let cloudUrl = null;
+    let finalPath = "",
+      cloudUrl = null;
 
     if (location === "local") {
       const form = new FormData();
@@ -171,6 +154,7 @@ export const uploadFile = async (req: Request, res: Response) => {
         filename: file.originalname,
         contentType: file.mimetype,
       });
+
       const { data } = await axios.post(
         `${getBridgeUrl()}/upload-bridge`,
         form,
@@ -243,9 +227,8 @@ export const syncFolder = async (req: Request, res: Response) => {
 
     let parentId = null;
     if (parent_name) {
-      const parts = parent_name.split("/");
       let currentId = null;
-      for (const part of parts) {
+      for (const part of parent_name.split("/")) {
         const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
@@ -253,26 +236,22 @@ export const syncFolder = async (req: Request, res: Response) => {
             type: QueryTypes.SELECT,
           },
         );
-        if (folder) {
-          currentId = folder.id_folder;
-        } else {
+        if (!folder) {
           currentId = null;
           break;
         }
+        currentId = folder.id_folder;
       }
       parentId = currentId;
     }
 
     if (old_name) {
-      const [updated]: any = await sequelize.query(
+      await sequelize.query(
         "UPDATE folders SET name = :name, parent_id = :parentId WHERE name = :oldName AND uid_user = :uid",
         {
           replacements: { name, parentId, oldName: old_name, uid: uid_user },
           type: QueryTypes.RAW,
         },
-      );
-      console.log(
-        `[SYNC] Carpeta renombrada de ${old_name} a ${name} (ID mantenido)`,
       );
       return res.status(200).json({ success: true, message: "Folder renamed" });
     }
@@ -310,9 +289,8 @@ export const syncUpsertFile = async (req: Request, res: Response) => {
 
     let folderId = null;
     if (folder_name) {
-      const parts = folder_name.split("/");
       let currentId = null;
-      for (const part of parts) {
+      for (const part of folder_name.split("/")) {
         const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
@@ -320,11 +298,11 @@ export const syncUpsertFile = async (req: Request, res: Response) => {
             type: QueryTypes.SELECT,
           },
         );
-        if (folder) currentId = folder.id_folder;
-        else {
+        if (!folder) {
           currentId = null;
           break;
         }
+        currentId = folder.id_folder;
       }
       folderId = currentId;
     }
@@ -362,9 +340,8 @@ export const syncRemove = async (req: Request, res: Response) => {
 
     let folderId = null;
     if (folder_name) {
-      const parts = folder_name.split("/");
       let currentId = null;
-      for (const part of parts) {
+      for (const part of folder_name.split("/")) {
         const [folder]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
@@ -372,17 +349,15 @@ export const syncRemove = async (req: Request, res: Response) => {
             type: QueryTypes.SELECT,
           },
         );
-        if (folder) currentId = folder.id_folder;
-        else {
+        if (!folder)
           return res
             .status(200)
             .json({ success: true, message: "Folder already gone" });
-        }
+        currentId = folder.id_folder;
       }
       folderId = currentId;
     }
 
-    // 2. Borrado Quirúrgico: Nombre + Usuario + Carpeta Específica
     await sequelize.query(
       "DELETE FROM files WHERE original_name = :name AND uid_user = :uid AND (id_folder = :folderId OR (id_folder IS NULL AND :folderId IS NULL))",
       {
@@ -407,9 +382,8 @@ export const removeFolderSync = async (req: Request, res: Response) => {
     setTimeout(async () => {
       let parentId = null;
       if (parent_name) {
-        const parts = parent_name.split("/");
         let currentId = null;
-        for (const part of parts) {
+        for (const part of parent_name.split("/")) {
           const [folder]: any = await sequelize.query(
             "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
             {
@@ -443,9 +417,8 @@ export const syncMove = async (req: Request, res: Response) => {
 
     let folderId = null;
     if (new_folder) {
-      const parts = new_folder.split("/");
       let currentId = null;
-      for (const part of parts) {
+      for (const part of new_folder.split("/")) {
         const [f]: any = await sequelize.query(
           "SELECT id_folder FROM folders WHERE name = :name AND uid_user = :uid AND (parent_id = :pId OR (parent_id IS NULL AND :pId IS NULL)) LIMIT 1",
           {
@@ -458,23 +431,14 @@ export const syncMove = async (req: Request, res: Response) => {
       folderId = currentId;
     }
 
-    if (is_folder) {
-      await sequelize.query(
-        "UPDATE folders SET parent_id = :folderId WHERE name = :name AND uid_user = :uid",
-        {
-          replacements: { folderId, name, uid: uid_user },
-          type: QueryTypes.RAW,
-        },
-      );
-    } else {
-      await sequelize.query(
-        "UPDATE files SET id_folder = :folderId WHERE original_name = :name AND uid_user = :uid",
-        {
-          replacements: { folderId, name, uid: uid_user },
-          type: QueryTypes.RAW,
-        },
-      );
-    }
+    const query = is_folder
+      ? "UPDATE folders SET parent_id = :folderId WHERE name = :name AND uid_user = :uid"
+      : "UPDATE files SET id_folder = :folderId WHERE original_name = :name AND uid_user = :uid";
+
+    await sequelize.query(query, {
+      replacements: { folderId, name, uid: uid_user },
+      type: QueryTypes.RAW,
+    });
 
     res.status(200).json({ success: true, message: "Atomic move successful" });
   } catch (error: any) {
@@ -507,11 +471,18 @@ export const getContent = async (req: Request, res: Response) => {
 export const getStorageStats = async (req: Request, res: Response) => {
   try {
     const { uid_user } = req.query;
+    if (!uid_user)
+      return res.status(400).json({ message: "uid_user required" });
+
     const [stats]: any = await sequelize.query(
       "CALL spu_get_user_storage_stats(:uid)",
-      { replacements: { uid: uid_user }, type: QueryTypes.RAW },
+      {
+        replacements: { uid: uid_user },
+        type: QueryTypes.RAW,
+      },
     );
-    res.json({ success: true, stats });
+
+    res.json({ success: true, stats: stats || {} });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -534,41 +505,35 @@ export const downloadFile = async (req: Request, res: Response) => {
 
       if (!file) return res.status(404).json({ message: "File not found" });
 
-      let fullPathParts: string[] = [];
-      let currentFolderId = file.id_folder;
-      let foundRoot = false;
-
-      if (!currentFolderId) foundRoot = true;
+      let fullPathParts = [],
+        currentId = file.id_folder,
+        foundRoot = !currentId;
 
       while (!foundRoot) {
         const [folder]: any = await sequelize.query(
           "SELECT name, parent_id FROM folders WHERE id_folder = :id AND uid_user = :uid LIMIT 1",
           {
-            replacements: { id: currentFolderId, uid: uid_user },
+            replacements: { id: currentId, uid: uid_user },
             type: QueryTypes.SELECT,
           },
         );
 
         if (folder) {
           fullPathParts.unshift(folder.name);
-          if (folder.parent_id) {
-            currentFolderId = folder.parent_id;
-          } else {
-            foundRoot = true;
-          }
-        } else {
-          foundRoot = true;
-        }
+          folder.parent_id
+            ? (currentId = folder.parent_id)
+            : (foundRoot = true);
+        } else foundRoot = true;
       }
 
       const folderPath = fullPathParts.join("/");
-      const finalFilePath = folderPath
+      const finalPath = folderPath
         ? `${folderPath}/${file.original_name}`
         : file.original_name;
 
-      const bridgeUrl = `${getBridgeUrl()}/api/bridge/download?path=${encodeURIComponent(finalFilePath)}`;
-
-      return res.redirect(bridgeUrl);
+      return res.redirect(
+        `${getBridgeUrl()}/api/bridge/download?path=${encodeURIComponent(finalPath)}`,
+      );
     }
 
     res.status(400).json({ message: "Cloud download not implemented" });
